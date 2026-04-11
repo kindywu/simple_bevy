@@ -26,6 +26,9 @@ pub struct Position {
     pub y: f32,
 }
 
+#[derive(Resource, Default)]
+struct PlayerCount(u32);
+
 #[derive(Component, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct PlayerId(pub u64);
 
@@ -67,6 +70,7 @@ fn main() {
         .replicate::<PlayerId>()
         .replicate::<PlayerColor>();
     app.add_client_message::<MoveInput>(Channel::Ordered);
+    app.init_resource::<PlayerCount>();
 
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(|s| s.as_str()) {
@@ -128,11 +132,19 @@ fn start_server(world: &mut World) {
     world.insert_resource(transport);
 }
 
-fn server_on_connect(trigger: On<Add, ConnectedClient>, mut commands: Commands) {
+fn server_on_connect(
+    trigger: On<Add, ConnectedClient>,
+    mut commands: Commands,
+    mut count: ResMut<PlayerCount>,
+) {
     let client_entity = trigger.event_target();
     info!("🔗 客户端连接! Client entity: {:?}", client_entity);
     let id_num = client_entity.to_bits();
-    let hue = (id_num as f32 * 137.5) % 360.0;
+
+    // 用递增计数器 × 黄金角度，保证颜色均匀不重叠
+    let hue = (count.0 as f32 * 137.508) % 360.0;
+    count.0 += 1;
+
     let (r, g, b) = hsv_to_rgb(hue, 0.8, 0.9);
     commands.spawn((
         Replicated,
