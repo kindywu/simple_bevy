@@ -72,6 +72,11 @@ fn main() {
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
 
+    // 【通用】服务端和客户端都需要相机
+    app.add_systems(Startup, setup_camera);
+    // 【通用】服务端和客户端都需要生成渲染、同步位置
+    app.add_systems(Update, (client_spawn_render, client_apply_position));
+
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(|s| s.as_str()) {
         Some("server") => {
@@ -81,17 +86,8 @@ fn main() {
             info!("=== 服务器启动 ===");
         }
         Some("client") => {
-            app.add_systems(Startup, (start_client, setup_camera));
-            app.add_systems(
-                Update,
-                (
-                    client_send_input,
-                    client_spawn_render,
-                    client_apply_position,
-                    check_connection,
-                    // debug_entities,
-                ),
-            );
+            app.add_systems(Startup, start_client);
+            app.add_systems(Update, (client_send_input, check_connection));
             info!("=== 客户端启动 ===");
         }
         _ => {
@@ -141,7 +137,6 @@ fn server_on_connect(
     info!("🔗 客户端连接! Client entity: {:?}", client_entity);
     let id_num = client_entity.to_bits();
 
-    // 用递增计数器 × 黄金角度，保证颜色均匀不重叠
     let hue = (count.0 as f32 * 137.508) % 360.0;
     count.0 += 1;
 
@@ -233,18 +228,12 @@ fn client_send_input(keyboard: Res<ButtonInput<KeyCode>>, mut writer: MessageWri
     }
 }
 
-// fn debug_entities(query: Query<Entity, With<PlayerId>>) {
-//     for e in query.iter() {
-//         info!("客户端已有 Player 实体: {:?}", e);
-//     }
-// }
-
 fn client_spawn_render(
     mut commands: Commands,
     new_players: Query<(Entity, &PlayerColor), (With<PlayerId>, Without<LocalSprite>)>,
 ) {
     for (entity, color) in new_players.iter() {
-        info!("✅ 收到新玩家实体: {:?}", entity);
+        info!("✅ 生成渲染实体: {:?}", entity);
         commands.entity(entity).insert((
             LocalSprite,
             Sprite {
