@@ -9,8 +9,7 @@ use bevy_replicon_renet::RepliconRenetPlugins;
 use client::{check_connection, client_send_input, setup_camera, start_client};
 use server::{server_handle_input, server_on_connect, start_server};
 use shared::{
-    MoveInput, PlayerColor, PlayerCount, PlayerId, Position, client_apply_position,
-    client_spawn_render,
+    MoveInput, PlayerColor, PlayerCount, PlayerId, Position, apply_position, spawn_render,
 };
 
 fn main() {
@@ -35,7 +34,7 @@ fn main() {
 
     // 通用渲染
     app.add_systems(Startup, setup_camera);
-    app.add_systems(Update, (client_spawn_render, client_apply_position));
+    app.add_systems(Update, (spawn_render, apply_position));
 
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(|s| s.as_str()) {

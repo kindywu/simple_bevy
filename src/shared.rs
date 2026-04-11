@@ -58,7 +58,7 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     }
 }
 
-pub fn client_spawn_render(
+pub fn spawn_render(
     mut commands: Commands,
     new_players: Query<(Entity, &PlayerColor), (With<PlayerId>, Without<LocalSprite>)>,
 ) {
@@ -78,7 +78,7 @@ pub fn client_spawn_render(
     }
 }
 
-pub fn client_apply_position(mut players: Query<(&Position, &mut Transform), With<PlayerId>>) {
+pub fn apply_position(mut players: Query<(&Position, &mut Transform), With<PlayerId>>) {
     for (pos, mut transform) in players.iter_mut() {
         transform.translation = Vec3::new(pos.x, pos.y, 0.0);
     }
