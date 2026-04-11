@@ -1,0 +1,13 @@
+[package]
+name = "simple"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.18.1"
+bevy_renet = "4.0.1"
+bevy_replicon = "0.39.4"
+bevy_replicon_renet = "0.15.0"
+serde = { version = "1", features = ["derive"] }
+
+
