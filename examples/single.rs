@@ -62,12 +62,12 @@ fn main() {
 
     match args.get(1).map(|s| s.as_str()) {
         Some("server") => {
-            app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
-                std::time::Duration::from_secs_f64(1.0 / 60.0),
-            )));
-            app.add_plugins(bevy::log::LogPlugin::default());
-            app.add_plugins(StatesPlugin);
             app.init_resource::<PlayerCount>();
+            let plugin = MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
+                std::time::Duration::from_secs_f64(1.0 / 60.0),
+            ));
+            let log_plugin = bevy::log::LogPlugin::default();
+            app.add_plugins((plugin, log_plugin, StatesPlugin));
             app.add_observer(server_on_connect);
             app.add_systems(Startup, start_server);
             app.add_systems(Update, server_handle_input);
@@ -80,8 +80,7 @@ fn main() {
                 }),
                 ..default()
             }));
-            app.add_systems(Startup, start_client);
-            app.add_systems(Startup, setup_camera);
+            app.add_systems(Startup, (start_client, setup_camera));
             app.add_systems(
                 Update,
                 (
