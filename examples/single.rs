@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{app::ScheduleRunnerPlugin, prelude::*, state::app::StatesPlugin};
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::backend::connected_client::ConnectedClient;
 use bevy_replicon::shared::message::client_message::ClientMessageAppExt;
@@ -58,13 +58,27 @@ struct ConnectionState {
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Bevy 多人游戏".into(),
+    let args: Vec<String> = std::env::args().collect();
+    let is_server = args.get(1).map(|s| s.as_str()) == Some("server");
+
+    if is_server {
+        // ✅ 修复：MinimalPlugins に StatesPlugin を追加
+        // bevy_replicon が内部で State を使うため StatesPlugin が必須
+        app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
+            std::time::Duration::from_secs_f64(1.0 / 60.0),
+        )));
+        app.add_plugins(bevy::log::LogPlugin::default());
+        app.add_plugins(StatesPlugin); // ← これが修正の核心
+    } else {
+        app.add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Bevy 多人游戏".into(),
+                ..default()
+            }),
             ..default()
-        }),
-        ..default()
-    }));
+        }));
+    }
+
     app.add_plugins((RepliconPlugins, RepliconRenetPlugins));
     app.replicate::<Position>()
         .replicate::<PlayerId>()
@@ -72,29 +86,27 @@ fn main() {
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
 
-    // 【通用】服务端和客户端都需要相机
     app.add_systems(Startup, setup_camera);
-    // 【通用】服务端和客户端都需要生成渲染、同步位置
-    app.add_systems(Update, (client_spawn_render, client_apply_position));
 
-    let args: Vec<String> = std::env::args().collect();
-    match args.get(1).map(|s| s.as_str()) {
-        Some("server") => {
-            app.add_observer(server_on_connect);
-            app.add_systems(Startup, start_server);
-            app.add_systems(Update, server_handle_input);
-            info!("=== 服务器启动 ===");
-        }
-        Some("client") => {
-            app.add_systems(Startup, start_client);
-            app.add_systems(Update, (client_send_input, check_connection));
-            info!("=== 客户端启动 ===");
-        }
-        _ => {
-            eprintln!("使用方法: cargo run -- server | client");
-            std::process::exit(1);
-        }
+    if is_server {
+        app.add_observer(server_on_connect);
+        app.add_systems(Startup, start_server);
+        app.add_systems(Update, server_handle_input);
+        info!("=== 服务器启动 ===");
+    } else {
+        app.add_systems(Startup, start_client);
+        app.add_systems(
+            Update,
+            (
+                client_send_input,
+                check_connection,
+                client_spawn_render,
+                client_apply_position,
+            ),
+        );
+        info!("=== 客户端启动 ===");
     }
+
     app.run();
 }
 
