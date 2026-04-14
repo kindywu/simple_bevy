@@ -59,22 +59,43 @@ struct ConnectionState {
 fn main() {
     let mut app = App::new();
     let args: Vec<String> = std::env::args().collect();
-    let is_server = args.get(1).map(|s| s.as_str()) == Some("server");
 
-    if is_server {
-        app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
-            std::time::Duration::from_secs_f64(1.0 / 60.0),
-        )));
-        app.add_plugins(bevy::log::LogPlugin::default());
-        app.add_plugins(StatesPlugin);
-    } else {
-        app.add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Bevy 多人游戏".into(),
+    match args.get(1).map(|s| s.as_str()) {
+        Some("server") => {
+            app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
+                std::time::Duration::from_secs_f64(1.0 / 60.0),
+            )));
+            app.add_plugins(bevy::log::LogPlugin::default());
+            app.add_plugins(StatesPlugin);
+            app.init_resource::<PlayerCount>();
+            app.add_observer(server_on_connect);
+            app.add_systems(Startup, start_server);
+            app.add_systems(Update, server_handle_input);
+        }
+        Some("client") => {
+            app.add_plugins(DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Bevy 多人游戏".into(),
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        }));
+            }));
+            app.add_systems(Startup, start_client);
+            app.add_systems(Startup, setup_camera);
+            app.add_systems(
+                Update,
+                (
+                    client_send_input,
+                    check_connection,
+                    client_spawn_render,
+                    client_apply_position,
+                ),
+            );
+        }
+        _ => {
+            eprintln!("用法：cargo run -- server | client");
+            std::process::exit(1);
+        }
     }
 
     app.add_plugins((RepliconPlugins, RepliconRenetPlugins));
@@ -82,28 +103,6 @@ fn main() {
         .replicate::<PlayerId>()
         .replicate::<PlayerColor>();
     app.add_client_message::<MoveInput>(Channel::Ordered);
-    app.init_resource::<PlayerCount>();
-
-    app.add_systems(Startup, setup_camera);
-
-    if is_server {
-        app.add_observer(server_on_connect);
-        app.add_systems(Startup, start_server);
-        app.add_systems(Update, server_handle_input);
-        info!("=== 服务器启动 ===");
-    } else {
-        app.add_systems(Startup, start_client);
-        app.add_systems(
-            Update,
-            (
-                client_send_input,
-                check_connection,
-                client_spawn_render,
-                client_apply_position,
-            ),
-        );
-        info!("=== 客户端启动 ===");
-    }
 
     app.run();
 }
