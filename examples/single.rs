@@ -62,13 +62,11 @@ fn main() {
     let is_server = args.get(1).map(|s| s.as_str()) == Some("server");
 
     if is_server {
-        // ✅ 修复：MinimalPlugins に StatesPlugin を追加
-        // bevy_replicon が内部で State を使うため StatesPlugin が必須
         app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
             std::time::Duration::from_secs_f64(1.0 / 60.0),
         )));
         app.add_plugins(bevy::log::LogPlugin::default());
-        app.add_plugins(StatesPlugin); // ← これが修正の核心
+        app.add_plugins(StatesPlugin);
     } else {
         app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
