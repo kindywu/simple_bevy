@@ -85,6 +85,31 @@ struct Trade {
 }
 
 // ============================================================
+// 新增：订单簿（真实对手盘撮合专用）
+// ============================================================
+#[derive(Resource, Default)]
+struct OrderBook {
+    buy_orders: Vec<Entity>,
+    sell_orders: Vec<Entity>,
+}
+
+impl OrderBook {
+    fn add_order(&mut self, entity: Entity, side: &OrderSide) {
+        match side {
+            OrderSide::Buy => self.buy_orders.push(entity),
+            OrderSide::Sell => self.sell_orders.push(entity),
+        }
+    }
+
+    fn remove_order(&mut self, entity: Entity, side: &OrderSide) {
+        match side {
+            OrderSide::Buy => self.buy_orders.retain(|e| e != &entity),
+            OrderSide::Sell => self.sell_orders.retain(|e| e != &entity),
+        }
+    }
+}
+
+// ============================================================
 // 2. 持久化层 (sled 嵌入式数据库)
 // ============================================================
 
@@ -97,7 +122,6 @@ struct Database {
 }
 
 impl Database {
-    /// 从已打开的 sled::Db 实例创建 Database（避免重复打开文件）
     fn new(db: &sled::Db) -> Self {
         Self {
             orders: db.open_tree("orders").expect("无法打开 orders tree"),
@@ -167,20 +191,18 @@ impl Database {
     }
 }
 
-// 让 Database 能作为 Bevy Resource
 impl Resource for Database {}
 
 // ============================================================
 // 3. Web API 层 (Axum)
 // ============================================================
 
-// 请求 / 响应结构
 #[derive(Deserialize)]
 struct CreateOrderRequest {
     symbol: String,
     price: f64,
     quantity: f64,
-    side: String, // "buy" | "sell"
+    side: String,
     account_id: u64,
 }
 
@@ -190,15 +212,13 @@ struct CreateOrderResponse {
     status: String,
 }
 
-// Axum 共享状态（跨线程克隆）
 #[derive(Clone)]
 struct AppState {
     order_sender: mpsc::Sender<Order>,
-    db: Arc<Database>, // 使用 Arc 包装，便于跨线程共享
+    db: Arc<Database>,
     order_id_counter: Arc<AtomicU64>,
 }
 
-// POST /orders — 创建新订单
 async fn create_order(
     State(state): State<AppState>,
     Json(req): Json<CreateOrderRequest>,
@@ -221,7 +241,6 @@ async fn create_order(
         account_id: req.account_id,
     };
 
-    // 先持久化，再发给 Bevy（即使进程崩溃订单也不会丢失）
     state.db.save_order(&order);
 
     if let Err(e) = state.order_sender.send(order).await {
@@ -245,7 +264,6 @@ async fn list_orders(
 ) -> Json<Vec<Order>> {
     let mut orders = state.db.load_all_orders();
 
-    // 如果传入了 status 参数，就进行过滤
     if let Some(status) = params.status {
         orders.retain(|order| order.status == status);
     }
@@ -253,12 +271,10 @@ async fn list_orders(
     Json(orders)
 }
 
-// GET /trades — 查询所有成交记录
 async fn list_trades(State(state): State<AppState>) -> Json<Vec<Trade>> {
     Json(state.db.load_all_trades())
 }
 
-// GET /accounts — 查询所有账户
 async fn list_accounts(State(state): State<AppState>) -> Json<Vec<Account>> {
     Json(state.db.load_all_accounts())
 }
@@ -267,36 +283,37 @@ async fn list_accounts(State(state): State<AppState>) -> Json<Vec<Account>> {
 // 4. Bevy ECS 层
 // ============================================================
 
-// Resource：持有从 Axum 接收订单的 channel 接收端
 #[derive(Resource)]
 struct OrderReceiver(mpsc::Receiver<Order>);
 
-// --- System 1：接收 API 订单，spawn 为 ECS Entity ---
-fn receive_api_orders_system(mut commands: Commands, mut receiver: ResMut<OrderReceiver>) {
+// --- 接收订单 + 加入订单簿 ---
+fn receive_api_orders_system(
+    mut commands: Commands,
+    mut receiver: ResMut<OrderReceiver>,
+    mut order_book: ResMut<OrderBook>,
+) {
     while let Ok(order) = receiver.0.try_recv() {
         println!(
             "📨 API 下单: #{} {} {}@{} (账户 {})",
             order.order_id, order.side, order.quantity, order.price, order.account_id
         );
-        commands.spawn(order);
+        let side = order.side.clone();
+        let entity = commands.spawn(order).id();
+        order_book.add_order(entity, &side);
     }
 }
 
-// --- System 2：模拟行情（随机游走）---
+// --- 模拟行情 ---
 fn simulate_market_data_system(mut market_data: Query<&mut MarketData>, db: Res<Database>) {
     for mut market in market_data.iter_mut() {
         let change = (rand::random::<f64>() - 0.5) * 0.001 * market.last_price;
         market.last_price += change;
         market.timestamp = Instant::now();
-
-        // 每帧持久化最新价格快照
         db.save_last_price(&market.symbol, market.last_price);
-
-        println!("📈 行情: {} = {:.2}", market.symbol, market.last_price);
     }
 }
 
-// --- System 3：风控检查 ---
+// --- 风控 ---
 fn risk_control_system(
     mut orders: Query<&mut Order>,
     accounts: Query<&Account>,
@@ -311,28 +328,14 @@ fn risk_control_system(
             let rejected = match order.side {
                 OrderSide::Buy => {
                     let required = order.price * order.quantity;
-                    if account.cash_balance < required {
-                        println!(
-                            "❌ 订单 #{} 拒绝: 资金不足 (需要 {:.2}，余额 {:.2})",
-                            order.order_id, required, account.cash_balance
-                        );
-                        true
-                    } else {
-                        false
-                    }
+                    account.cash_balance < required
                 }
                 OrderSide::Sell => {
-                    match account.positions.iter().find(|p| p.symbol == order.symbol) {
-                        Some(pos) if pos.quantity >= order.quantity => false,
-                        Some(_) => {
-                            println!("❌ 订单 #{} 拒绝: 持仓不足", order.order_id);
-                            true
-                        }
-                        None => {
-                            println!("❌ 订单 #{} 拒绝: 无持仓", order.order_id);
-                            true
-                        }
-                    }
+                    let has_pos = account
+                        .positions
+                        .iter()
+                        .any(|p| p.symbol == order.symbol && p.quantity >= order.quantity);
+                    !has_pos
                 }
             };
 
@@ -344,43 +347,54 @@ fn risk_control_system(
     }
 }
 
-// --- System 4：订单撮合 ---
+// ============================================================
+// 核心：真实对手盘撮合（买 ↔ 卖配对）
+// ============================================================
 fn order_matching_system(
     mut commands: Commands,
-    mut orders: Query<&mut Order>,
-    market_data: Query<&MarketData>,
+    mut orders: Query<(Entity, &mut Order)>,
     mut trade_id_counter: Local<u64>,
+    mut order_book: ResMut<OrderBook>,
     db: Res<Database>,
 ) {
-    if let Some(market) = market_data.iter().next() {
-        for mut order in orders.iter_mut() {
-            if order.status != OrderStatus::Pending || order.symbol != market.symbol {
+    let mut matched_entities = Vec::new();
+
+    for &buy_entity in &order_book.buy_orders.clone() {
+        if matched_entities.contains(&buy_entity) {
+            continue;
+        }
+        let (_, buy_order) = match orders.get(buy_entity) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if buy_order.status != OrderStatus::Pending {
+            continue;
+        }
+
+        for &sell_entity in &order_book.sell_orders.clone() {
+            if matched_entities.contains(&sell_entity) {
+                continue;
+            }
+            let (_, sell_order) = match orders.get(sell_entity) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if sell_order.status != OrderStatus::Pending || sell_order.symbol != buy_order.symbol {
                 continue;
             }
 
-            let can_match = match order.side {
-                OrderSide::Buy => order.price >= market.last_price,
-                OrderSide::Sell => order.price <= market.last_price,
-            };
-
-            if can_match {
+            // 撮合规则：买价 >= 卖价 立即成交
+            if buy_order.price >= sell_order.price {
                 *trade_id_counter += 1;
+                let trade_qty = buy_order.quantity.min(sell_order.quantity);
 
                 let trade = Trade {
                     trade_id: *trade_id_counter,
-                    buy_order_id: if order.side == OrderSide::Buy {
-                        order.order_id
-                    } else {
-                        0
-                    },
-                    sell_order_id: if order.side == OrderSide::Sell {
-                        order.order_id
-                    } else {
-                        0
-                    },
-                    symbol: order.symbol.clone(),
-                    price: market.last_price,
-                    quantity: order.quantity,
+                    buy_order_id: buy_order.order_id,
+                    sell_order_id: sell_order.order_id,
+                    symbol: buy_order.symbol.clone(),
+                    price: sell_order.price,
+                    quantity: trade_qty,
                     timestamp_ms: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -388,21 +402,39 @@ fn order_matching_system(
                 };
 
                 println!(
-                    "✅ 撮合成功: 订单 #{} 以 {:.2} 成交 {} 手",
-                    order.order_id, market.last_price, order.quantity
+                    "✅ 撮合成功：买单 #{} ↔ 卖单 #{} | 价格 {:.2} 数量 {:.2}",
+                    buy_order.order_id, sell_order.order_id, trade.price, trade.quantity
                 );
 
                 db.save_trade(&trade);
-                order.status = OrderStatus::Filled;
-                db.save_order(&order);
-
                 commands.spawn(trade);
+
+                // 标记订单为已成交
+                if let Ok((_, mut o)) = orders.get_mut(buy_entity) {
+                    o.status = OrderStatus::Filled;
+                    db.save_order(&o);
+                }
+                if let Ok((_, mut o)) = orders.get_mut(sell_entity) {
+                    o.status = OrderStatus::Filled;
+                    db.save_order(&o);
+                }
+
+                matched_entities.push(buy_entity);
+                matched_entities.push(sell_entity);
+                break;
             }
+        }
+    }
+
+    // 从订单簿移除已成交订单
+    for entity in matched_entities {
+        if let Ok((_, order)) = orders.get(entity) {
+            order_book.remove_order(entity, &order.side);
         }
     }
 }
 
-// --- System 5：清算结算 ---
+// --- 清算结算 ---
 fn settlement_system(
     trades: Query<&Trade, Added<Trade>>,
     mut accounts: Query<&mut Account>,
@@ -410,75 +442,46 @@ fn settlement_system(
     db: Res<Database>,
 ) {
     for trade in trades.iter() {
-        // 处理买方
-        if trade.buy_order_id != 0 {
-            if let Some(buy_order) = orders.iter().find(|o| o.order_id == trade.buy_order_id) {
-                if let Some(mut account) = accounts
-                    .iter_mut()
-                    .find(|a| a.account_id == buy_order.account_id)
-                {
-                    let cost = trade.price * trade.quantity;
-                    account.cash_balance -= cost;
-
-                    if let Some(pos) = account
-                        .positions
-                        .iter_mut()
-                        .find(|p| p.symbol == trade.symbol)
-                    {
-                        pos.quantity += trade.quantity;
-                    } else {
-                        account.positions.push(Position {
-                            symbol: trade.symbol.clone(),
-                            quantity: trade.quantity,
-                        });
-                    }
-
-                    println!(
-                        "💼 买方账户 {}: 扣款 {:.2}，持仓 +{} {}",
-                        account.account_id, cost, trade.quantity, trade.symbol
-                    );
-
-                    db.save_account(&account);
+        // 买方结算
+        if let Some(buy_order) = orders.iter().find(|o| o.order_id == trade.buy_order_id) {
+            if let Some(mut acc) = accounts
+                .iter_mut()
+                .find(|a| a.account_id == buy_order.account_id)
+            {
+                acc.cash_balance -= trade.price * trade.quantity;
+                if let Some(pos) = acc.positions.iter_mut().find(|p| p.symbol == trade.symbol) {
+                    pos.quantity += trade.quantity;
+                } else {
+                    acc.positions.push(Position {
+                        symbol: trade.symbol.clone(),
+                        quantity: trade.quantity,
+                    });
                 }
+                db.save_account(&acc);
             }
         }
 
-        // 处理卖方
-        if trade.sell_order_id != 0 {
-            if let Some(sell_order) = orders.iter().find(|o| o.order_id == trade.sell_order_id) {
-                if let Some(mut account) = accounts
-                    .iter_mut()
-                    .find(|a| a.account_id == sell_order.account_id)
-                {
-                    let revenue = trade.price * trade.quantity;
-                    account.cash_balance += revenue;
-
-                    if let Some(pos) = account
-                        .positions
-                        .iter_mut()
-                        .find(|p| p.symbol == trade.symbol)
-                    {
-                        pos.quantity -= trade.quantity;
-                    }
-
-                    println!(
-                        "💼 卖方账户 {}: 入账 {:.2}，持仓 -{} {}",
-                        account.account_id, revenue, trade.quantity, trade.symbol
-                    );
-
-                    db.save_account(&account);
+        // 卖方结算
+        if let Some(sell_order) = orders.iter().find(|o| o.order_id == trade.sell_order_id) {
+            if let Some(mut acc) = accounts
+                .iter_mut()
+                .find(|a| a.account_id == sell_order.account_id)
+            {
+                acc.cash_balance += trade.price * trade.quantity;
+                if let Some(pos) = acc.positions.iter_mut().find(|p| p.symbol == trade.symbol) {
+                    pos.quantity -= trade.quantity;
                 }
+                db.save_account(&acc);
             }
         }
     }
 }
 
-// --- Startup System：初始化或从数据库恢复 ---
+// --- 初始化 ---
 fn setup(mut commands: Commands, db: Res<Database>) {
+    // 初始化账户
     let existing_accounts = db.load_all_accounts();
-
-    if existing_accounts.is_empty() {
-        // 首次启动，创建默认账户
+    if !existing_accounts.iter().any(|a| a.account_id == 1001) {
         let account = Account {
             account_id: 1001,
             cash_balance: 100_000.0,
@@ -486,94 +489,96 @@ fn setup(mut commands: Commands, db: Res<Database>) {
         };
         db.save_account(&account);
         commands.spawn(account);
-        println!("🆕 首次启动，创建账户 1001（余额 100,000）");
-    } else {
-        // 从数据库恢复
-        for account in existing_accounts {
-            println!(
-                "♻️ 恢复账户 {}（余额 {:.2}，持仓 {} 种）",
-                account.account_id,
-                account.cash_balance,
-                account.positions.len()
-            );
-            commands.spawn(account);
-        }
+        println!("🆕 创建账户 1001（余额 100,000）");
     }
 
-    // 恢复 Pending 状态的历史订单
-    let pending_orders: Vec<Order> = db
+    // 确保账户 1002 存在
+    if !existing_accounts.iter().any(|a| a.account_id == 1002) {
+        let account = Account {
+            account_id: 1002,
+            cash_balance: 50_000.0,
+            positions: vec![Position {
+                symbol: "BTC/USDT".to_string(),
+                quantity: 1.0,
+            }],
+        };
+        db.save_account(&account);
+        commands.spawn(account);
+        println!("🆕 创建账户 1002（余额 50,000）");
+    }
+
+    for account in existing_accounts {
+        println!(
+            "♻️ 恢复账户 {}（余额 {:.2}，持仓 {} 种）",
+            account.account_id,
+            account.cash_balance,
+            account.positions.len()
+        );
+        commands.spawn(account);
+    }
+
+    // 恢复未成交订单
+    let pending_orders: Vec<_> = db
         .load_all_orders()
         .into_iter()
         .filter(|o| o.status == OrderStatus::Pending)
         .collect();
-
-    if !pending_orders.is_empty() {
-        println!("♻️ 恢复 {} 条 Pending 订单", pending_orders.len());
-        for order in pending_orders {
-            commands.spawn(order);
-        }
+    for order in pending_orders {
+        commands.spawn(order);
     }
 
-    // 恢复行情（首次使用默认价格）
-    let last_price = db.load_last_price("BTC/USDT").unwrap_or(50_000.0);
+    // 初始化行情
+    let price = db.load_last_price("BTC/USDT").unwrap_or(50000.0);
     commands.spawn(MarketData {
-        symbol: "BTC/USDT".to_string(),
-        last_price,
+        symbol: "BTC/USDT".into(),
+        last_price: price,
         timestamp: Instant::now(),
     });
 
-    println!("🚀 Bevy ECS 启动完成，行情初始价格: {:.2}", last_price);
+    // 插入订单簿
+    commands.insert_resource(OrderBook::default());
+    println!("🚀 系统启动完成，初始行情：{}", price);
 }
 
 // ============================================================
-// 5. 主函数：同时启动 Axum + Bevy
+// 5. 主函数
 // ============================================================
-
 fn main() {
-    // 1. 打开数据库（只开一次）
-    let sled_db = sled::open("./trading.db").expect("无法打开数据库");
+    // 数据库
+    let sled_db = sled::open("./trading.db").expect("数据库打开失败");
     let db = Database::new(&sled_db);
 
-    // 2. channel 缓冲 100 条订单（Axum → Bevy）
-    let (tx, rx) = mpsc::channel::<Order>(100);
-
-    // 3. order_id 计数器
+    // 通道
+    let (tx, rx) = mpsc::channel(100);
     let order_id_counter = Arc::new(AtomicU64::new(10000));
 
-    // 4. Axum 状态（需要 Arc<Database> 以跨线程）
+    // Axum 状态
     let app_state = AppState {
         order_sender: tx,
-        db: Arc::new(db.clone()), // 克隆 Database（共享底层 Tree）
+        db: Arc::new(db.clone()),
         order_id_counter,
     };
 
-    // 5. 在独立线程启动 Axum
+    // 启动 API 服务
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let router = Router::new()
-                .route("/orders", post(create_order))
-                .route("/orders", get(list_orders))
+            let app = Router::new()
+                .route("/orders", post(create_order).get(list_orders))
                 .route("/trades", get(list_trades))
                 .route("/accounts", get(list_accounts))
                 .with_state(app_state);
 
             let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-
-            println!("🌐 API 服务启动: http://localhost:3000");
-            println!("   POST /orders   — 下单");
-            println!("   GET  /orders   — 查询订单");
-            println!("   GET  /trades   — 查询成交");
-            println!("   GET  /accounts — 查询账户");
-
-            axum::serve(listener, router).await.unwrap();
+            println!("🌐 API 服务已启动：http://localhost:3000");
+            axum::serve(listener, app).await.unwrap();
         });
     });
 
-    // 6. Bevy 运行在主线程（阻塞）
+    // Bevy 引擎
     App::new()
         .add_plugins(MinimalPlugins)
-        .insert_resource(db) // 直接插入 Database 实例（已实现 Resource）
+        .insert_resource(db)
         .insert_resource(OrderReceiver(rx))
         .add_systems(Startup, setup)
         .add_systems(

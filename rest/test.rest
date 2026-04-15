@@ -14,7 +14,7 @@ GET {{host}}/orders
 ### orders
 GET {{host}}/orders?status=pending
 
-### purchase order
+### buy order
 POST {{host}}/orders
 Content-Type: application/json
 
@@ -24,4 +24,4 @@ Content-Type: application/json
 POST {{host}}/orders
 Content-Type: application/json
 
-{"symbol":"BTC/USDT","price":50000.0,"quantity":0.1,"side":"sell","account_id":1001}
+{"symbol":"BTC/USDT","price":50000.0,"quantity":0.1,"side":"sell","account_id":1002}
