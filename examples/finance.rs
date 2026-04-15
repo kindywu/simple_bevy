@@ -25,9 +25,21 @@ struct Order {
     symbol: String,
     price: f64,
     quantity: f64,
+    #[serde(default)] // 兼容旧数据（若无此字段则填0.0）
+    filled_quantity: f64,
     side: OrderSide,
     status: OrderStatus,
     account_id: u64,
+}
+
+impl Order {
+    fn remaining(&self) -> f64 {
+        (self.quantity - self.filled_quantity).max(0.0)
+    }
+
+    fn is_fully_filled(&self) -> bool {
+        self.remaining() <= 1e-9
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,6 +61,7 @@ impl std::fmt::Display for OrderSide {
 #[serde(rename_all = "snake_case")]
 enum OrderStatus {
     Pending,
+    PartialFilled,
     Filled,
     Rejected,
 }
@@ -85,27 +98,31 @@ struct Trade {
 }
 
 // ============================================================
-// 新增：订单簿（真实对手盘撮合专用）
+// 新增：订单簿（真实对手盘撮合专用，按价格排序）
 // ============================================================
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct OrderBook {
-    buy_orders: Vec<Entity>,
-    sell_orders: Vec<Entity>,
+    buy_orders: Vec<Entity>,  // 价格从高到低
+    sell_orders: Vec<Entity>, // 价格从低到高
+}
+
+impl Default for OrderBook {
+    fn default() -> Self {
+        Self {
+            buy_orders: Vec::new(),
+            sell_orders: Vec::new(),
+        }
+    }
 }
 
 impl OrderBook {
-    fn add_order(&mut self, entity: Entity, side: &OrderSide) {
-        match side {
-            OrderSide::Buy => self.buy_orders.push(entity),
-            OrderSide::Sell => self.sell_orders.push(entity),
-        }
-    }
+    fn add_order(&mut self, entity: Entity, order: &Order) {
+        let vec = match order.side {
+            OrderSide::Buy => &mut self.buy_orders,
+            OrderSide::Sell => &mut self.sell_orders,
+        };
 
-    fn remove_order(&mut self, entity: Entity, side: &OrderSide) {
-        match side {
-            OrderSide::Buy => self.buy_orders.retain(|e| e != &entity),
-            OrderSide::Sell => self.sell_orders.retain(|e| e != &entity),
-        }
+        vec.push(entity);
     }
 }
 
@@ -236,6 +253,7 @@ async fn create_order(
         symbol: req.symbol,
         price: req.price,
         quantity: req.quantity,
+        filled_quantity: 0.0,
         side,
         status: OrderStatus::Pending,
         account_id: req.account_id,
@@ -297,10 +315,29 @@ fn receive_api_orders_system(
             "📨 API 下单: #{} {} {}@{} (账户 {})",
             order.order_id, order.side, order.quantity, order.price, order.account_id
         );
-        let side = order.side.clone();
-        let entity = commands.spawn(order).id();
-        order_book.add_order(entity, &side);
+        let entity = commands.spawn(order.clone()).id();
+        order_book.add_order(entity, &order);
     }
+}
+
+// --- 维护订单簿排序 ---
+fn sort_order_book_system(mut order_book: ResMut<OrderBook>, orders: Query<(Entity, &Order)>) {
+    // 重新排序买入订单（价格降序）
+    order_book.buy_orders.sort_by(|&a, &b| {
+        let price_a = orders.get(a).map(|o| o.1.price).unwrap_or(0.0);
+        let price_b = orders.get(b).map(|o| o.1.price).unwrap_or(0.0);
+        price_b
+            .partial_cmp(&price_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    // 重新排序卖出订单（价格升序）
+    order_book.sell_orders.sort_by(|&a, &b| {
+        let price_a = orders.get(a).map(|o| o.1.price).unwrap_or(f64::MAX);
+        let price_b = orders.get(b).map(|o| o.1.price).unwrap_or(f64::MAX);
+        price_a
+            .partial_cmp(&price_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 }
 
 // --- 模拟行情 ---
@@ -313,28 +350,30 @@ fn simulate_market_data_system(mut market_data: Query<&mut MarketData>, db: Res<
     }
 }
 
-// --- 风控 ---
+// --- 风控（检查剩余数量）---
 fn risk_control_system(
     mut orders: Query<&mut Order>,
     accounts: Query<&Account>,
     db: Res<Database>,
 ) {
     for mut order in orders.iter_mut() {
-        if order.status != OrderStatus::Pending {
+        // 只检查未完全成交且未拒绝的订单
+        if order.status == OrderStatus::Filled || order.status == OrderStatus::Rejected {
             continue;
         }
+        let remaining = order.remaining();
 
         if let Some(account) = accounts.iter().find(|a| a.account_id == order.account_id) {
             let rejected = match order.side {
                 OrderSide::Buy => {
-                    let required = order.price * order.quantity;
+                    let required = order.price * remaining;
                     account.cash_balance < required
                 }
                 OrderSide::Sell => {
                     let has_pos = account
                         .positions
                         .iter()
-                        .any(|p| p.symbol == order.symbol && p.quantity >= order.quantity);
+                        .any(|p| p.symbol == order.symbol && p.quantity >= remaining);
                     !has_pos
                 }
             };
@@ -342,13 +381,14 @@ fn risk_control_system(
             if rejected {
                 order.status = OrderStatus::Rejected;
                 db.save_order(&order);
+                println!("⚠️ 订单 #{} 被风控拒绝", order.order_id);
             }
         }
     }
 }
 
 // ============================================================
-// 核心：真实对手盘撮合（买 ↔ 卖配对）
+// 核心：真实对手盘撮合（支持部分成交）
 // ============================================================
 fn order_matching_system(
     mut commands: Commands,
@@ -357,81 +397,108 @@ fn order_matching_system(
     mut order_book: ResMut<OrderBook>,
     db: Res<Database>,
 ) {
-    let mut matched_entities = Vec::new();
+    // 注意：假设 order_book 已经由 sort_order_book_system 排好序
+    let mut i = 0;
+    while i < order_book.buy_orders.len() {
+        let buy_entity = order_book.buy_orders[i];
+        let mut j = 0;
+        while j < order_book.sell_orders.len() {
+            let sell_entity = order_book.sell_orders[j];
 
-    for &buy_entity in &order_book.buy_orders.clone() {
-        if matched_entities.contains(&buy_entity) {
-            continue;
-        }
-        let (_, buy_order) = match orders.get(buy_entity) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if buy_order.status != OrderStatus::Pending {
-            continue;
-        }
-
-        for &sell_entity in &order_book.sell_orders.clone() {
-            if matched_entities.contains(&sell_entity) {
-                continue;
-            }
-            let (_, sell_order) = match orders.get(sell_entity) {
-                Ok(v) => v,
-                Err(_) => continue,
+            let (buy_ok, sell_ok) = match (
+                orders.get(buy_entity).ok().map(|(_, o)| o),
+                orders.get(sell_entity).ok().map(|(_, o)| o),
+            ) {
+                (Some(b), Some(s))
+                    if b.symbol == s.symbol
+                        && b.status != OrderStatus::Filled
+                        && b.status != OrderStatus::Rejected
+                        && s.status != OrderStatus::Filled
+                        && s.status != OrderStatus::Rejected
+                        && b.price >= s.price =>
+                {
+                    (b, s)
+                }
+                _ => {
+                    j += 1;
+                    continue;
+                }
             };
-            if sell_order.status != OrderStatus::Pending || sell_order.symbol != buy_order.symbol {
+
+            let trade_qty = buy_ok.remaining().min(sell_ok.remaining());
+            if trade_qty <= 0.0 {
+                j += 1;
                 continue;
             }
 
-            // 撮合规则：买价 >= 卖价 立即成交
-            if buy_order.price >= sell_order.price {
-                *trade_id_counter += 1;
-                let trade_qty = buy_order.quantity.min(sell_order.quantity);
+            // 生成成交
+            *trade_id_counter += 1;
+            let trade = Trade {
+                trade_id: *trade_id_counter,
+                buy_order_id: buy_ok.order_id,
+                sell_order_id: sell_ok.order_id,
+                symbol: buy_ok.symbol.clone(),
+                price: sell_ok.price, // 以卖单价格成交
+                quantity: trade_qty,
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+            };
+            db.save_trade(&trade);
+            commands.spawn(trade);
 
-                let trade = Trade {
-                    trade_id: *trade_id_counter,
-                    buy_order_id: buy_order.order_id,
-                    sell_order_id: sell_order.order_id,
-                    symbol: buy_order.symbol.clone(),
-                    price: sell_order.price,
-                    quantity: trade_qty,
-                    timestamp_ms: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64,
-                };
+            println!(
+                "✅ 撮合成交: 买 #{} ↔ 卖 #{} | 价格 {:.2} 数量 {:.2}",
+                buy_ok.order_id, sell_ok.order_id, sell_ok.price, trade_qty
+            );
 
-                println!(
-                    "✅ 撮合成功：买单 #{} ↔ 卖单 #{} | 价格 {:.2} 数量 {:.2}",
-                    buy_order.order_id, sell_order.order_id, trade.price, trade.quantity
-                );
-
-                db.save_trade(&trade);
-                commands.spawn(trade);
-
-                // 标记订单为已成交
-                if let Ok((_, mut o)) = orders.get_mut(buy_entity) {
-                    o.status = OrderStatus::Filled;
-                    db.save_order(&o);
+            // 更新买单
+            if let Ok((_, mut bo)) = orders.get_mut(buy_entity) {
+                bo.filled_quantity += trade_qty;
+                if bo.is_fully_filled() {
+                    bo.status = OrderStatus::Filled;
+                } else {
+                    bo.status = OrderStatus::PartialFilled;
                 }
-                if let Ok((_, mut o)) = orders.get_mut(sell_entity) {
-                    o.status = OrderStatus::Filled;
-                    db.save_order(&o);
-                }
-
-                matched_entities.push(buy_entity);
-                matched_entities.push(sell_entity);
-                break;
+                db.save_order(&bo);
             }
+
+            // 更新卖单
+            if let Ok((_, mut so)) = orders.get_mut(sell_entity) {
+                so.filled_quantity += trade_qty;
+                if so.is_fully_filled() {
+                    so.status = OrderStatus::Filled;
+                } else {
+                    so.status = OrderStatus::PartialFilled;
+                }
+                db.save_order(&so);
+            }
+
+            // 如果买单完全成交，则跳出内层循环，外层将处理下一个买单
+            if let Ok((_, bo)) = orders.get(buy_entity) {
+                if bo.status == OrderStatus::Filled {
+                    break;
+                }
+            }
+            j += 1;
         }
+        i += 1;
     }
 
-    // 从订单簿移除已成交订单
-    for entity in matched_entities {
-        if let Ok((_, order)) = orders.get(entity) {
-            order_book.remove_order(entity, &order.side);
-        }
-    }
+    // 清理订单簿中已完全成交的订单
+    order_book.buy_orders.retain(|&e| {
+        orders
+            .get(e)
+            .map(|(_, o)| o.status != OrderStatus::Filled)
+            .unwrap_or(false)
+    });
+    order_book.sell_orders.retain(|&e| {
+        orders
+            .get(e)
+            .map(|(_, o)| o.status != OrderStatus::Filled)
+            .unwrap_or(false)
+    });
 }
 
 // --- 清算结算 ---
@@ -478,7 +545,7 @@ fn settlement_system(
 }
 
 // --- 初始化 ---
-fn setup(mut commands: Commands, db: Res<Database>) {
+fn setup(mut commands: Commands, db: Res<Database>, mut order_book: ResMut<OrderBook>) {
     // 初始化账户
     let existing_accounts = db.load_all_accounts();
     if !existing_accounts.iter().any(|a| a.account_id == 1001) {
@@ -492,7 +559,6 @@ fn setup(mut commands: Commands, db: Res<Database>) {
         println!("🆕 创建账户 1001（余额 100,000）");
     }
 
-    // 确保账户 1002 存在
     if !existing_accounts.iter().any(|a| a.account_id == 1002) {
         let account = Account {
             account_id: 1002,
@@ -504,7 +570,7 @@ fn setup(mut commands: Commands, db: Res<Database>) {
         };
         db.save_account(&account);
         commands.spawn(account);
-        println!("🆕 创建账户 1002（余额 50,000）");
+        println!("🆕 创建账户 1002（余额 50,000，持仓 1 BTC）");
     }
 
     for account in existing_accounts {
@@ -517,14 +583,19 @@ fn setup(mut commands: Commands, db: Res<Database>) {
         commands.spawn(account);
     }
 
-    // 恢复未成交订单
-    let pending_orders: Vec<_> = db
+    // 恢复未完成订单（Pending 或 PartialFilled）
+    let active_orders: Vec<_> = db
         .load_all_orders()
         .into_iter()
-        .filter(|o| o.status == OrderStatus::Pending)
+        .filter(|o| o.status == OrderStatus::Pending || o.status == OrderStatus::PartialFilled)
         .collect();
-    for order in pending_orders {
-        commands.spawn(order);
+    for order in active_orders {
+        println!(
+            "♻️ 恢复订单 #{} {} {:.2}@{:.2} (已成交 {:.2})",
+            order.order_id, order.side, order.quantity, order.price, order.filled_quantity
+        );
+        let entity = commands.spawn(order.clone()).id();
+        order_book.add_order(entity, &order);
     }
 
     // 初始化行情
@@ -535,7 +606,6 @@ fn setup(mut commands: Commands, db: Res<Database>) {
         timestamp: Instant::now(),
     });
 
-    // 插入订单簿
     commands.insert_resource(OrderBook::default());
     println!("🚀 系统启动完成，初始行情：{}", price);
 }
@@ -580,11 +650,13 @@ fn main() {
         .add_plugins(MinimalPlugins)
         .insert_resource(db)
         .insert_resource(OrderReceiver(rx))
+        .insert_resource(OrderBook::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
                 receive_api_orders_system,
+                sort_order_book_system, // 新增：排序订单簿
                 simulate_market_data_system,
                 risk_control_system,
                 order_matching_system,
