@@ -656,7 +656,7 @@ fn main() {
             Update,
             (
                 receive_api_orders_system,
-                sort_order_book_system, // 新增：排序订单簿
+                sort_order_book_system,
                 simulate_market_data_system,
                 risk_control_system,
                 order_matching_system,
