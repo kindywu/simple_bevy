@@ -10,6 +10,10 @@ GET {{host}}/accounts
 ### orders
 GET {{host}}/orders
 
+
+### orders
+GET {{host}}/orders?status=pending
+
 ### purchase order
 POST {{host}}/orders
 Content-Type: application/json

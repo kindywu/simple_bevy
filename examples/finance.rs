@@ -1,18 +1,4 @@
-// ============================================================
-// 量化交易系统 - 单文件完整实现
-// 依赖: bevy, sled, bincode, serde, axum, tokio
-//
-// Cargo.toml 配置:
-// [dependencies]
-// bevy = { version = "0.14", default-features = false, features = ["bevy_app", "bevy_ecs"] }
-// sled = "0.34"
-// bincode = "1.3"
-// serde = { version = "1", features = ["derive"] }
-// axum = "0.7"
-// tokio = { version = "1", features = ["full"] }
-// rand = "0.8"
-// ============================================================
-
+use axum::extract::Query as AxumQuery;
 use axum::{
     Json, Router,
     extract::State,
@@ -60,6 +46,7 @@ impl std::fmt::Display for OrderSide {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum OrderStatus {
     Pending,
     Filled,
@@ -247,9 +234,23 @@ async fn create_order(
     })
 }
 
-// GET /orders — 查询所有订单（直接读数据库，不经过 Bevy）
-async fn list_orders(State(state): State<AppState>) -> Json<Vec<Order>> {
-    Json(state.db.load_all_orders())
+#[derive(Debug, Deserialize)]
+pub struct OrderQueryParams {
+    status: Option<OrderStatus>,
+}
+
+async fn list_orders(
+    State(state): State<AppState>,
+    AxumQuery(params): AxumQuery<OrderQueryParams>,
+) -> Json<Vec<Order>> {
+    let mut orders = state.db.load_all_orders();
+
+    // 如果传入了 status 参数，就进行过滤
+    if let Some(status) = params.status {
+        orders.retain(|order| order.status == status);
+    }
+
+    Json(orders)
 }
 
 // GET /trades — 查询所有成交记录
@@ -284,14 +285,14 @@ fn receive_api_orders_system(mut commands: Commands, mut receiver: ResMut<OrderR
 // --- System 2：模拟行情（随机游走）---
 fn simulate_market_data_system(mut market_data: Query<&mut MarketData>, db: Res<Database>) {
     for mut market in market_data.iter_mut() {
-        let change = (rand::random::<f64>() - 0.5) * 0.01 * market.last_price;
+        let change = (rand::random::<f64>() - 0.5) * 0.001 * market.last_price;
         market.last_price += change;
         market.timestamp = Instant::now();
 
         // 每帧持久化最新价格快照
         db.save_last_price(&market.symbol, market.last_price);
 
-        // println!("📈 行情: {} = {:.2}", market.symbol, market.last_price);
+        println!("📈 行情: {} = {:.2}", market.symbol, market.last_price);
     }
 }
 
