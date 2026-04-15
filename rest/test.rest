@@ -1,0 +1,23 @@
+@host = http://localhost:3000
+
+### trades
+GET {{host}}/trades
+
+### accounts
+GET {{host}}/accounts
+
+
+### orders
+GET {{host}}/orders
+
+### purchase order
+POST {{host}}/orders
+Content-Type: application/json
+
+{"symbol":"BTC/USDT","price":51000.0,"quantity":0.2,"side":"buy","account_id":1001}
+
+### sell order
+POST {{host}}/orders
+Content-Type: application/json
+
+{"symbol":"BTC/USDT","price":50000.0,"quantity":0.1,"side":"sell","account_id":1001}
