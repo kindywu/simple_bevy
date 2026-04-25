@@ -21,10 +21,11 @@ graph TD
         A[App] --> B[DefaultPlugins]
         A --> C[RepliconPlugins]
         A --> D[RepliconRenetPlugins]
-        A --> E[渲染系统 spawn_render]
-        A --> F[渲染系统 apply_position]
+        A --> E[spawn_render]
+        A --> F[apply_position]
         A --> G[setup_camera]
-        A --> H{命令行参数}
+        A --> H[init_player_count]
+        A --> I{命令行参数}
         H -->|server| I[服务端系统]
         H -->|client| J[客户端系统]
     end
@@ -34,24 +35,26 @@ graph TD
         L[PlayerId]
         M[PlayerColor]
         N[MoveInput]
-        O[PlayerCount]
-        P[ConnectTimer]
-        Q[ConnectionState]
-        R[hsv_to_rgb]
-        S[spawn_render]
-        T[apply_position]
+        O[LocalSprite]
+        P[PlayerCount]
+        Q[ConnectTimer]
+        R[ConnectionState]
+        S[hsv_to_rgb]
+        T[spawn_render]
+        U[apply_position]
     end
 
     subgraph server["server.rs - 服务端"]
-        U[start_server]
-        V[server_on_connect]
-        W[server_handle_input]
+        V[start_server]
+        W[server_on_connect]
+        X[server_handle_input]
+        Y[client_id_to_u64]
     end
 
     subgraph client["client.rs - 客户端"]
-        X[start_client]
-        Y[client_send_input]
-        Z[check_connection]
+        Z[start_client]
+        AA[client_send_input]
+        AB[check_connection]
     end
 
     main --> shared
@@ -67,9 +70,9 @@ sequenceDiagram
     participant S as 服务端
 
     Note over S: start_server<br/>监听 UDP:5000
-    C->>S: start_client<br/>连接请求
+    C->>S: start_client<br/>连接请求 (NetcodeClientTransport)
     S-->>C: 连接确认
-    Note over C: check_connection<br/>打印"已连接"
+    Note over C: check_connection<br/>打印"✅ 已连接服务器"
 
     S->>S: server_on_connect<br/>生成玩家实体 (Replicated)
     Note over S: Position, PlayerId, PlayerColor<br/>自动复制到客户端
@@ -99,7 +102,18 @@ sequenceDiagram
 |------|------|
 | PlayerCount | 已连接玩家数，用于生成颜色 |
 | ConnectTimer | 客户端连接超时计时器（5秒）|
-| ConnectionState | 连接状态标记 |
+| ConnectionState | 连接状态标记（printed_connected）|
+| RepliconChannels | 网络通道配置 |
+| RenetClient / RenetServer | 网络客户端/服务端实例 |
+| NetcodeClientTransport / NetcodeServerTransport | 传输层实例 |
+
+## 常量定义
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| PORT | 5000 | 服务器监听端口 |
+| MOVE_SPEED | 300.0 | 玩家移动速度（像素/秒）|
+| PROTOCOL_ID | 123456 | 网络协议标识 |
 
 ## 系统调度
 
@@ -112,22 +126,22 @@ graph LR
     Observer --> server_on_connect
 ```
 
+### 通用系统（服务端+客户端）
+
+```mermaid
+graph LR
+    Startup --> setup_camera
+    Update --> spawn_render
+    Update --> apply_position
+```
+
 ### 客户端
 
 ```mermaid
 graph LR
     Startup --> start_client
-    Startup --> setup_camera
     Update --> client_send_input
     Update --> check_connection
-```
-
-### 通用渲染
-
-```mermaid
-graph LR
-    Update --> spawn_render
-    Update --> apply_position
 ```
 
 ## 数据流

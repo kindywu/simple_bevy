@@ -44,10 +44,6 @@ pub fn start_client(world: &mut World) {
     world.insert_resource(ConnectTimer(Timer::from_seconds(5.0, TimerMode::Once)));
 }
 
-pub fn setup_camera(mut commands: Commands) {
-    commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
-}
-
 pub fn client_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut writer: MessageWriter<MoveInput>,

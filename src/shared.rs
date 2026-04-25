@@ -83,3 +83,7 @@ pub fn apply_position(mut players: Query<(&Position, &mut Transform), With<Playe
         transform.translation = Vec3::new(pos.x, pos.y, 0.0);
     }
 }
+
+pub fn setup_camera(mut commands: Commands) {
+    commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
+}

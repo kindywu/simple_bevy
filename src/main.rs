@@ -6,10 +6,11 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
 
-use client::{check_connection, client_send_input, setup_camera, start_client};
+use client::{check_connection, client_send_input, start_client};
 use server::{server_handle_input, server_on_connect, start_server};
 use shared::{
-    MoveInput, PlayerColor, PlayerCount, PlayerId, Position, apply_position, spawn_render,
+    MoveInput, PlayerColor, PlayerCount, PlayerId, Position, apply_position, setup_camera,
+    spawn_render,
 };
 
 fn main() {
