@@ -30,6 +30,17 @@ pub struct MoveInput {
 #[derive(Component)]
 pub struct LocalSprite;
 
+#[derive(Component)]
+pub struct LocalPlayer;
+
+#[derive(Component, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct Direction {
+    pub angle: f32,
+}
+
+#[derive(Resource)]
+pub struct LocalClientId(pub u64);
+
 #[derive(Resource, Default)]
 pub struct PlayerCount(pub u32);
 
@@ -60,27 +71,41 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
 
 pub fn spawn_render(
     mut commands: Commands,
-    new_players: Query<(Entity, &PlayerColor), (With<PlayerId>, Without<LocalSprite>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    local_id: Option<Res<LocalClientId>>,
+    new_players: Query<(Entity, &PlayerId, &PlayerColor), (With<PlayerId>, Without<LocalSprite>)>,
 ) {
-    for (entity, color) in new_players.iter() {
-        commands.entity(entity).insert((
+    for (entity, player_id, color) in new_players.iter() {
+        let mesh = Triangle2d::new(
+            Vec2::new(0.0, 20.0),
+            Vec2::new(-15.0, -20.0),
+            Vec2::new(15.0, -20.0),
+        );
+        let mut cmd = commands.entity(entity);
+        cmd.insert((
             LocalSprite,
-            Sprite {
-                color: Color::srgb(color.r, color.g, color.b),
-                custom_size: Some(Vec2::splat(40.0)),
-                ..default()
-            },
+            Mesh2d(meshes.add(mesh)),
+            MeshMaterial2d(materials.add(Color::srgb(color.r, color.g, color.b))),
             Transform::default(),
             GlobalTransform::default(),
             Visibility::default(),
             InheritedVisibility::VISIBLE,
         ));
+        if let Some(ref id) = local_id {
+            if player_id.0 == id.0 {
+                cmd.insert(LocalPlayer);
+            }
+        }
     }
 }
 
-pub fn apply_position(mut players: Query<(&Position, &mut Transform), With<PlayerId>>) {
-    for (pos, mut transform) in players.iter_mut() {
+pub fn apply_position(
+    mut players: Query<(&Position, &Direction, &mut Transform), With<PlayerId>>,
+) {
+    for (pos, dir, mut transform) in players.iter_mut() {
         transform.translation = Vec3::new(pos.x, pos.y, 0.0);
+        transform.rotation = Quat::from_rotation_z(dir.angle);
     }
 }
 

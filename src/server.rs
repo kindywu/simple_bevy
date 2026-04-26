@@ -59,6 +59,7 @@ pub fn server_on_connect(
         Replicated,
         PlayerId(id_num),
         Position { x: 0.0, y: 0.0 },
+        Direction::default(),
         PlayerColor { r, g, b },
     ));
 
@@ -67,15 +68,18 @@ pub fn server_on_connect(
 
 pub fn server_handle_input(
     mut move_msgs: MessageReader<FromClient<MoveInput>>,
-    mut players: Query<(&PlayerId, &mut Position)>,
+    mut players: Query<(&PlayerId, &mut Position, &mut Direction)>,
     time: Res<Time>,
 ) {
     for FromClient { client_id, message } in move_msgs.read() {
         let sender_id = client_id_to_u64(*client_id);
-        for (player_id, mut pos) in players.iter_mut() {
+        for (player_id, mut pos, mut dir) in players.iter_mut() {
             if player_id.0 == sender_id {
                 pos.x += message.dx * MOVE_SPEED * time.delta_secs();
                 pos.y += message.dy * MOVE_SPEED * time.delta_secs();
+                if message.dx != 0.0 || message.dy != 0.0 {
+                    dir.angle = message.dy.atan2(message.dx) - std::f32::consts::FRAC_PI_2;
+                }
             }
         }
     }

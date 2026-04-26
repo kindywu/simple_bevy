@@ -9,8 +9,8 @@ use bevy_replicon_renet::RepliconRenetPlugins;
 use client::{check_connection, client_send_input, start_client};
 use server::{server_handle_input, server_on_connect, start_server};
 use shared::{
-    MoveInput, PlayerColor, PlayerCount, PlayerId, Position, apply_position, setup_camera,
-    spawn_render,
+    Direction, MoveInput, PlayerColor, PlayerCount, PlayerId, Position, apply_position,
+    setup_camera, spawn_render,
 };
 
 fn main() {
@@ -27,6 +27,7 @@ fn main() {
     app.add_plugins((RepliconPlugins, RepliconRenetPlugins));
 
     app.replicate::<Position>();
+    app.replicate::<Direction>();
     app.replicate::<PlayerId>();
     app.replicate::<PlayerColor>();
 

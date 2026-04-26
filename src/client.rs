@@ -42,11 +42,13 @@ pub fn start_client(world: &mut World) {
     world.insert_resource(transport);
     world.insert_resource(ConnectionState::default());
     world.insert_resource(ConnectTimer(Timer::from_seconds(5.0, TimerMode::Once)));
+    world.insert_resource(LocalClientId(client_id));
 }
 
 pub fn client_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut writer: MessageWriter<MoveInput>,
+    mut local_players: Query<&mut Direction, With<LocalPlayer>>,
 ) {
     let mut dx: f32 = 0.0;
     let mut dy: f32 = 0.0;
@@ -66,10 +68,15 @@ pub fn client_send_input(
 
     if dx != 0.0 || dy != 0.0 {
         let len: f32 = (dx * dx + dy * dy).sqrt();
-        writer.write(MoveInput {
-            dx: dx / len,
-            dy: dy / len,
-        });
+        let ndx = dx / len;
+        let ndy = dy / len;
+
+        let angle = ndy.atan2(ndx) - std::f32::consts::FRAC_PI_2;
+        for mut dir in local_players.iter_mut() {
+            dir.angle = angle;
+        }
+
+        writer.write(MoveInput { dx: ndx, dy: ndy });
     }
 }
 
