@@ -120,43 +120,25 @@ pub fn update_scoreboard(
     let mut player_data: Vec<_> = players.iter().collect();
     player_data.sort_unstable_by(|a, b| b.1 .0.cmp(&a.1 .0));
 
-    // Title
-    let title = commands
+    let mut text = "=== Scores ===".to_string();
+    if player_data.is_empty() {
+        text.push_str("\nWaiting...");
+    } else {
+        for (player_id, score, _color) in &player_data {
+            let short_id = player_id.0 % 1000;
+            text.push_str(&format!("\nP{short_id}: {}", score.0));
+        }
+    }
+
+    let entry = commands
         .spawn((
-            TextSpan("=== Scores ===".into()),
-            TextFont::from_font_size(20.0),
-            TextColor(Color::srgb(0.9, 0.9, 0.3)),
+            TextSpan(text.into()),
+            TextFont::from_font_size(18.0),
+            TextColor(Color::WHITE),
         ))
         .id();
-    commands.entity(title).set_parent_in_place(root);
-    prev_entries.push(title);
-
-    if player_data.is_empty() {
-        let empty = commands
-            .spawn((
-                TextSpan("Waiting...".into()),
-                TextFont::from_font_size(16.0),
-                TextColor(Color::srgb(0.6, 0.6, 0.6)),
-            ))
-            .id();
-        commands.entity(empty).set_parent_in_place(root);
-        prev_entries.push(empty);
-        return;
-    }
-
-    for (player_id, score, color) in &player_data {
-        let short_id = player_id.0 % 1000;
-        let line = format!("P{short_id}: {}", score.0);
-        let entry = commands
-            .spawn((
-                TextSpan(line),
-                TextFont::from_font_size(18.0),
-                TextColor(Color::srgb(color.r, color.g, color.b)),
-            ))
-            .id();
-        commands.entity(entry).set_parent_in_place(root);
-        prev_entries.push(entry);
-    }
+    commands.entity(entry).set_parent_in_place(root);
+    prev_entries.push(entry);
 }
 
 pub fn check_connection(

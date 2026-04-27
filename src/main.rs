@@ -49,7 +49,7 @@ fn main() {
     match args.get(1).map(|s| s.as_str()) {
         Some("server") => {
             app.add_observer(server_on_connect);
-            app.add_systems(Startup, start_server);
+            app.add_systems(Startup, (start_server, setup_scoreboard));
             app.add_systems(
                 Update,
                 (
@@ -58,6 +58,7 @@ fn main() {
                     combat_detection,
                     respawn_dead_players,
                     update_visibility,
+                    update_scoreboard,
                 )
                     .chain(),
             );
