@@ -6,7 +6,9 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
 
-use client::{check_connection, client_send_input, start_client};
+use client::{
+    check_connection, client_send_input, setup_scoreboard, start_client, update_scoreboard,
+};
 use server::{
     clamp_positions, combat_detection, respawn_dead_players, server_handle_input,
     server_on_connect, start_server,
@@ -62,8 +64,11 @@ fn main() {
             info!("=== 服务端启动 ===");
         }
         Some("client") => {
-            app.add_systems(Startup, start_client);
-            app.add_systems(Update, (client_send_input, check_connection, update_visibility));
+            app.add_systems(Startup, (start_client, setup_scoreboard));
+            app.add_systems(
+                Update,
+                (client_send_input, check_connection, update_visibility, update_scoreboard),
+            );
             info!("=== 客户端启动 ===");
         }
         _ => {
