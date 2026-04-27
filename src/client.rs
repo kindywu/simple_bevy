@@ -48,7 +48,7 @@ pub fn start_client(world: &mut World) {
 pub fn client_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut writer: MessageWriter<MoveInput>,
-    mut local_players: Query<&mut Direction, With<LocalPlayer>>,
+    mut local_players: Query<&mut Direction, (With<LocalPlayer>, Without<Dead>)>,
 ) {
     let mut dx: f32 = 0.0;
     let mut dy: f32 = 0.0;

@@ -7,10 +7,13 @@ use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
 
 use client::{check_connection, client_send_input, start_client};
-use server::{clamp_positions, server_handle_input, server_on_connect, start_server};
+use server::{
+    clamp_positions, combat_detection, respawn_dead_players, server_handle_input,
+    server_on_connect, start_server,
+};
 use shared::{
-    Direction, MoveInput, PlayerColor, PlayerCount, PlayerId, Position, apply_position,
-    setup_camera, spawn_render,
+    Dead, Direction, MoveInput, PlayerColor, PlayerCount, PlayerId, Position, Score,
+    apply_position, setup_camera, spawn_render, update_visibility,
 };
 
 fn main() {
@@ -30,6 +33,8 @@ fn main() {
     app.replicate::<Direction>();
     app.replicate::<PlayerId>();
     app.replicate::<PlayerColor>();
+    app.replicate::<Score>();
+    app.replicate::<Dead>();
 
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
@@ -43,12 +48,22 @@ fn main() {
         Some("server") => {
             app.add_observer(server_on_connect);
             app.add_systems(Startup, start_server);
-            app.add_systems(Update, (server_handle_input, clamp_positions).chain());
+            app.add_systems(
+                Update,
+                (
+                    server_handle_input,
+                    clamp_positions,
+                    combat_detection,
+                    respawn_dead_players,
+                    update_visibility,
+                )
+                    .chain(),
+            );
             info!("=== 服务端启动 ===");
         }
         Some("client") => {
             app.add_systems(Startup, start_client);
-            app.add_systems(Update, (client_send_input, check_connection));
+            app.add_systems(Update, (client_send_input, check_connection, update_visibility));
             info!("=== 客户端启动 ===");
         }
         _ => {

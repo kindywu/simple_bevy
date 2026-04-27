@@ -7,8 +7,12 @@ pub const PROTOCOL_ID: u64 = 123456;
 pub const VISIBLE_HALF_WIDTH: f32 = 640.0;
 pub const VISIBLE_HALF_HEIGHT: f32 = 360.0;
 pub const BOUNDARY_MARGIN: f32 = 25.0;
+pub const KILL_SCORE: u32 = 10;
+pub const RESPAWN_DELAY_SECS: f32 = 3.0;
+pub const SAFE_SPAWN_DISTANCE: f32 = 200.0;
+pub const MAX_SPAWN_ATTEMPTS: u32 = 50;
 
-#[derive(Component, Clone, Copy, Serialize, Deserialize)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Position {
     pub x: f32,
     pub y: f32,
@@ -40,6 +44,15 @@ pub struct LocalPlayer;
 pub struct Direction {
     pub angle: f32,
 }
+
+#[derive(Component, Clone, Copy, Serialize, Deserialize, Default, Debug)]
+pub struct Score(pub u32);
+
+#[derive(Component, Clone, Copy, Serialize, Deserialize, Debug)]
+pub struct Dead;
+
+#[derive(Component, Deref, DerefMut)]
+pub struct RespawnTimer(pub Timer);
 
 #[derive(Resource)]
 pub struct LocalClientId(pub u64);
@@ -114,4 +127,20 @@ pub fn apply_position(
 
 pub fn setup_camera(mut commands: Commands) {
     commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
+}
+
+pub fn update_visibility(
+    mut dead: Query<&mut Visibility, With<Dead>>,
+    mut alive: Query<&mut Visibility, (With<PlayerId>, Without<Dead>)>,
+) {
+    for mut vis in dead.iter_mut() {
+        if *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+    }
+    for mut vis in alive.iter_mut() {
+        if *vis != Visibility::Inherited {
+            *vis = Visibility::Inherited;
+        }
+    }
 }
