@@ -7,7 +7,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
 
 use client::{check_connection, client_send_input, start_client};
-use server::{server_handle_input, server_on_connect, start_server};
+use server::{clamp_positions, server_handle_input, server_on_connect, start_server};
 use shared::{
     Direction, MoveInput, PlayerColor, PlayerCount, PlayerId, Position, apply_position,
     setup_camera, spawn_render,
@@ -43,7 +43,7 @@ fn main() {
         Some("server") => {
             app.add_observer(server_on_connect);
             app.add_systems(Startup, start_server);
-            app.add_systems(Update, server_handle_input);
+            app.add_systems(Update, (server_handle_input, clamp_positions).chain());
             info!("=== 服务端启动 ===");
         }
         Some("client") => {

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 pub const PORT: u16 = 5000;
 pub const MOVE_SPEED: f32 = 300.0;
 pub const PROTOCOL_ID: u64 = 123456;
+pub const VISIBLE_HALF_WIDTH: f32 = 640.0;
+pub const VISIBLE_HALF_HEIGHT: f32 = 360.0;
+pub const BOUNDARY_MARGIN: f32 = 25.0;
 
 #[derive(Component, Clone, Copy, Serialize, Deserialize)]
 pub struct Position {

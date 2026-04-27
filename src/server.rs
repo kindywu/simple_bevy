@@ -85,6 +85,17 @@ pub fn server_handle_input(
     }
 }
 
+pub fn clamp_positions(mut players: Query<&mut Position, With<PlayerId>>) {
+    let min_x = -VISIBLE_HALF_WIDTH + BOUNDARY_MARGIN;
+    let max_x = VISIBLE_HALF_WIDTH - BOUNDARY_MARGIN;
+    let min_y = -VISIBLE_HALF_HEIGHT + BOUNDARY_MARGIN;
+    let max_y = VISIBLE_HALF_HEIGHT - BOUNDARY_MARGIN;
+    for mut pos in players.iter_mut() {
+        pos.x = pos.x.clamp(min_x, max_x);
+        pos.y = pos.y.clamp(min_y, max_y);
+    }
+}
+
 fn client_id_to_u64(id: ClientId) -> u64 {
     match id {
         ClientId::Server => 0,
