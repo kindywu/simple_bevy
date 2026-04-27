@@ -1,8 +1,8 @@
-# Bevy 多人游戏设计文档
+# simple — 设计文档
 
 ## 项目概述
 
-基于 Bevy 引擎 + bevy_replicon 的多人联机游戏原型，支持服务端/客户端同一份代码运行。玩家通过键盘方向键或 WASD 控制方块移动，每个玩家拥有随机颜色。
+基于 Bevy 引擎 + bevy_replicon 的多人联机游戏原型，支持服务端/客户端同一份代码运行。玩家通过键盘方向键或 WASD 控制三角形移动，三角形朝向移动方向旋转，每个玩家拥有随机颜色。
 
 ## 技术栈
 
@@ -36,25 +36,28 @@ graph TD
         M[PlayerColor]
         N[MoveInput]
         O[LocalSprite]
-        P[PlayerCount]
-        Q[ConnectTimer]
-        R[ConnectionState]
-        S[hsv_to_rgb]
-        T[spawn_render]
-        U[apply_position]
+        P[LocalPlayer]
+        Q[Direction]
+        R[LocalClientId]
+        S[PlayerCount]
+        T[ConnectTimer]
+        U[ConnectionState]
+        V[hsv_to_rgb]
+        W[spawn_render]
+        X[apply_position]
+        Y[setup_camera]
     end
 
     subgraph server["server.rs - 服务端"]
-        V[start_server]
-        W[server_on_connect]
-        X[server_handle_input]
-        Y[client_id_to_u64]
+        Z[start_server]
+        AA[server_on_connect]
+        AB[server_handle_input]
     end
 
     subgraph client["client.rs - 客户端"]
-        Z[start_client]
-        AA[client_send_input]
-        AB[check_connection]
+        AC[start_client]
+        AD[client_send_input]
+        AE[check_connection]
     end
 
     main --> shared
@@ -75,14 +78,14 @@ sequenceDiagram
     Note over C: check_connection<br/>打印"✅ 已连接服务器"
 
     S->>S: server_on_connect<br/>生成玩家实体 (Replicated)
-    Note over S: Position, PlayerId, PlayerColor<br/>自动复制到客户端
+    Note over S: Position, PlayerId, PlayerColor, Direction<br/>自动复制到客户端
 
     loop 每帧
         C->>C: client_send_input<br/>读取键盘 WASD/方向键
         C->>S: MoveInput {dx, dy}
-        S->>S: server_handle_input<br/>更新 Position
-        S-->>C: 同步 Position
-        C->>C: apply_position<br/>更新 Transform
+        S->>S: server_handle_input<br/>更新 Position + Direction
+        S-->>C: 同步 Position + Direction
+        C->>C: apply_position<br/>更新 Transform 平移 + 旋转
     end
 ```
 
@@ -91,16 +94,19 @@ sequenceDiagram
 | 组件 | 属性 | 说明 |
 |------|------|------|
 | Position | x, y: f32 | 玩家位置，服务端权威 |
+| Direction | angle: f32 | 玩家朝向角度，服务端权威 |
 | PlayerId | u64 | 玩家唯一标识 |
 | PlayerColor | r, g, b: f32 | 玩家颜色 |
 | MoveInput | dx, dy: f32 | 移动输入向量（归一化）|
-| LocalSprite | - | 标记已生成渲染精灵 |
+| LocalSprite | - | 标记已生成渲染网格 |
+| LocalPlayer | - | 标记本地玩家实体 |
 
 ## 资源定义
 
 | 资源 | 说明 |
 |------|------|
 | PlayerCount | 已连接玩家数，用于生成颜色 |
+| LocalClientId | 本地客户端 ID，用于标记本地玩家 |
 | ConnectTimer | 客户端连接超时计时器（5秒）|
 | ConnectionState | 连接状态标记（printed_connected）|
 | RepliconChannels | 网络通道配置 |
@@ -161,7 +167,7 @@ graph LR
 
     subgraph Network["网络层 (bevy_replicon + renet)"]
         E[MoveInput ↑]
-        F[Position/PlayerColor ↓]
+        F[Position / Direction ↓]
     end
 
     subgraph ServerSys["服务端系统"]
@@ -173,11 +179,18 @@ graph LR
     A --> E
     E --> G
     G --> F
-    F --> D
     F --> C
-    C --> I[Sprite 渲染]
-    D --> J[Transform 更新]
+    F --> D
+    C --> I[Triangle2d 渲染]
+    D --> J[Transform 平移 + 旋转]
 ```
+
+## 渲染说明
+
+- 玩家实体使用 `Triangle2d` 网格渲染（顶点朝上），不再使用方块 Sprite
+- `spawn_render` 为所有玩家（含远程）创建渲染实体，并通过 `LocalPlayer` 标记本地玩家
+- `apply_position` 同时应用 Position（平移）和 Direction（绕 Z 轴旋转），三角形始终朝向移动方向
+- 不移动时角度保持最终方向；移动时角度通过 `atan2(dy, dx) - π/2` 计算
 
 ## 启动方式
 
