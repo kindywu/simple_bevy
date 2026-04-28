@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Core multiplayer game (two separate binaries)
-cargo run --bin server --features server   # Start server (listens on UDP :5000)
-cargo run --bin client --features client   # Start client (connects to localhost:5000)
+cargo run --bin server    # Start server (listens on UDP :5000)
+cargo run --bin client    # Start client (connects to localhost:5000)
 
 # Secure client release (excludes server code from binary)
-cargo build --bin client --no-default-features --features client --release
+cargo build --bin client client --release
 
 # Finance trading engine (Bevy ECS + axum REST + sled DB)
 cargo run --example finance
@@ -64,14 +64,14 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 
 ## Key Dependencies
 
-| Crate | Usage |
-|-------|-------|
-| `bevy` 0.18 | Game engine (all examples) |
-| `bevy_replicon` | Network replication (core game, single example) |
-| `bevy_replicon_renet` / `bevy_renet` | renet transport layer |
-| `axum` + `tokio` | REST API (finance example only) |
-| `sled` | Embedded DB for persistence (finance example only) |
-| `serde` + `bincode` | Serialization (all binaries) |
+| Crate                                | Usage                                              |
+| ------------------------------------ | -------------------------------------------------- |
+| `bevy` 0.18                          | Game engine (all examples)                         |
+| `bevy_replicon`                      | Network replication (core game, single example)    |
+| `bevy_replicon_renet` / `bevy_renet` | renet transport layer                              |
+| `axum` + `tokio`                     | REST API (finance example only)                    |
+| `sled`                               | Embedded DB for persistence (finance example only) |
+| `serde` + `bincode`                  | Serialization (all binaries)                       |
 
 ## Code Patterns
 

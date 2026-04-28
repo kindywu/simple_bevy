@@ -11,6 +11,12 @@ use std::{
     time::SystemTime,
 };
 
+mod render;
+mod scoreboard;
+
+use render::{spawn_render, apply_position, update_visibility};
+use scoreboard::{setup_scoreboard, update_scoreboard};
+
 #[derive(Resource)]
 pub(crate) struct ConnectTimer(pub Timer);
 
@@ -18,6 +24,9 @@ pub(crate) struct ConnectTimer(pub Timer);
 pub(crate) struct ConnectionState {
     pub printed_connected: bool,
 }
+
+#[derive(Resource)]
+pub struct LocalClientId(pub u64);
 
 pub fn start_client(world: &mut World) {
     let channels = world.resource::<RepliconChannels>();
@@ -56,7 +65,7 @@ pub fn start_client(world: &mut World) {
 pub fn client_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut writer: MessageWriter<MoveInput>,
-    mut local_players: Query<&mut Direction, (With<LocalPlayer>, Without<Dead>)>,
+    mut local_players: Query<&mut Direction, (With<render::LocalPlayer>, Without<Dead>)>,
 ) {
     let mut dx: f32 = 0.0;
     let mut dy: f32 = 0.0;
@@ -102,4 +111,41 @@ pub fn check_connection(
     if timer.0.is_finished() && !client.is_connected() {
         panic!("❌ 连接超时");
     }
+}
+
+pub fn setup_camera(mut commands: Commands) {
+    commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
+}
+
+pub fn run() {
+    let mut app = App::new();
+
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "Bevy 多人游戏 - 客户端".into(),
+            ..default()
+        }),
+        ..default()
+    }));
+
+    app.add_plugins((RepliconPlugins, bevy_replicon_renet::RepliconRenetPlugins));
+
+    app.replicate::<Position>();
+    app.replicate::<Direction>();
+    app.replicate::<PlayerId>();
+    app.replicate::<PlayerColor>();
+    app.replicate::<Score>();
+    app.replicate::<Dead>();
+
+    app.add_client_message::<MoveInput>(Channel::Ordered);
+    app.init_resource::<PlayerCount>();
+
+    app.add_systems(Startup, (setup_camera, start_client, setup_scoreboard));
+    app.add_systems(
+        Update,
+        (client_send_input, check_connection, spawn_render, apply_position, update_visibility, update_scoreboard),
+    );
+    info!("=== 客户端启动 ===");
+
+    app.run();
 }
