@@ -6,16 +6,14 @@ pub struct ScoreboardRoot;
 
 pub fn setup_scoreboard(mut commands: Commands) {
     commands.spawn((
-        Text::new(""),
-        TextFont::from_font_size(20.0),
-        TextColor(Color::WHITE),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            right: Val::Px(15.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexEnd,
-            row_gap: Val::Px(2.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            row_gap: Val::Px(4.0),
             ..default()
         },
         GlobalZIndex(10),
@@ -28,6 +26,8 @@ pub fn update_scoreboard(
     scoreboard: Query<Entity, With<ScoreboardRoot>>,
     mut prev_entries: Local<Vec<Entity>>,
     players: Query<(&PlayerId, &Score, &PlayerColor)>,
+    asset_server: Res<AssetServer>,
+    mut font_handle: Local<Option<Handle<Font>>>,
 ) {
     let Ok(root) = scoreboard.single() else {
         return;
@@ -38,26 +38,55 @@ pub fn update_scoreboard(
     }
     prev_entries.clear();
 
+    let font = font_handle
+        .get_or_insert_with(|| asset_server.load("C:/Windows/Fonts/msyh.ttc"))
+        .clone();
+
     let mut player_data: Vec<_> = players.iter().collect();
     player_data.sort_unstable_by(|a, b| b.1 .0.cmp(&a.1 .0));
 
-    let mut text = "=== Scores ===".to_string();
-    if player_data.is_empty() {
-        text.push_str("\nWaiting...");
-    } else {
-        for (player_id, score, _color) in &player_data {
-            let short_id = player_id.0 % 1000;
-            text.push_str(&format!("\nP{short_id}: {}", score.0));
-        }
-    }
-
-    let entry = commands
+    let title = commands
         .spawn((
-            TextSpan(text.into()),
-            TextFont::from_font_size(18.0),
-            TextColor(Color::WHITE),
+            Text::new("=== 排行榜 ==="),
+            TextFont { font: font.clone(), font_size: 22.0, ..default() },
+            TextColor(Color::srgb(1.0, 0.85, 0.3)),
+            TextLayout { justify: Justify::Center, ..default() },
         ))
         .id();
-    commands.entity(entry).set_parent_in_place(root);
-    prev_entries.push(entry);
+    commands.entity(title).set_parent_in_place(root);
+    prev_entries.push(title);
+
+    if player_data.is_empty() {
+        let entry = commands
+            .spawn((
+                Text::new("等待玩家加入..."),
+                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                TextLayout { justify: Justify::Center, ..default() },
+            ))
+            .id();
+        commands.entity(entry).set_parent_in_place(root);
+        prev_entries.push(entry);
+    } else {
+        for (rank, (player_id, score, color)) in player_data.iter().enumerate() {
+            let short_id = player_id.0 % 1000;
+            let rank_str = match rank {
+                0 => "\u{1f947}".to_string(),
+                1 => "\u{1f948}".to_string(),
+                2 => "\u{1f949}".to_string(),
+                n => format!("#{}", n + 1),
+            };
+            let text_str = format!("{rank_str}  P{short_id}  —  {}分", score.0);
+            let entry = commands
+                .spawn((
+                    Text::new(text_str),
+                    TextFont { font: font.clone(), font_size: 17.0, ..default() },
+                    TextColor(Color::srgb(color.r, color.g, color.b)),
+                    TextLayout { justify: Justify::Center, ..default() },
+                ))
+                .id();
+            commands.entity(entry).set_parent_in_place(root);
+            prev_entries.push(entry);
+        }
+    }
 }

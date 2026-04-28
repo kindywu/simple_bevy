@@ -1,4 +1,5 @@
 use crate::shared::*;
+use bevy::asset::{AssetPlugin, UnapprovedPathMode};
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::{
@@ -12,9 +13,11 @@ use std::{
 };
 
 mod combat;
+mod render;
 mod scoreboard;
 
 use combat::{combat_detection, respawn_dead_players};
+use render::{apply_position, setup_camera, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
 pub const MOVE_SPEED: f32 = 300.0;
@@ -158,13 +161,20 @@ pub fn update_visibility(
 pub fn run() {
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Bevy 多人游戏 - 服务端".into(),
-            ..default()
-        }),
-        ..default()
-    }));
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Bevy 多人游戏 - 服务端".into(),
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(AssetPlugin {
+                unapproved_path_mode: UnapprovedPathMode::Allow,
+                ..default()
+            }),
+    );
 
     app.add_plugins((RepliconPlugins, bevy_replicon_renet::RepliconRenetPlugins));
 
@@ -179,14 +189,16 @@ pub fn run() {
     app.init_resource::<PlayerCount>();
 
     app.add_observer(server_on_connect);
-    app.add_systems(Startup, (start_server, setup_scoreboard));
+    app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard));
     app.add_systems(
         Update,
         (
+            spawn_render,
             server_handle_input,
             clamp_positions,
             combat_detection,
             respawn_dead_players,
+            apply_position,
             update_visibility,
             update_scoreboard,
         )
