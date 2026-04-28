@@ -4,7 +4,9 @@
       "Bash(cargo check *)",
       "Bash(git *)",
       "Bash(cargo build *)",
-      "Bash(cargo run *)"
+      "Bash(cargo run *)",
+      "Read(//c/Windows/Fonts/**)",
+      "Bash(cargo doc *)"
     ]
   }
 }
