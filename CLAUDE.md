@@ -6,8 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Core multiplayer game (two separate binaries)
-cargo run --bin server       # Start server (listens on UDP :5000)
-cargo run --bin client       # Start client (connects to localhost:5000)
+cargo run --bin server --features server   # Start server (listens on UDP :5000)
+cargo run --bin client --features client   # Start client (connects to localhost:5000)
+
+# Secure client release (excludes server code from binary)
+cargo build --bin client --no-default-features --features client --release
 
 # Finance trading engine (Bevy ECS + axum REST + sled DB)
 cargo run --example finance
@@ -26,7 +29,7 @@ There are no tests in this project.
 
 ### Core Game (`src/`)
 
-Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared library (`src/lib.rs`). `lib.rs` exposes `run_game(GameMode)` which builds the App with common plugins/systems and branches on the mode. All ECS components and shared systems live in `src/shared.rs`. Server systems in `src/server.rs`, client systems in `src/client.rs`.
+Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared library (`src/lib.rs`). `lib.rs` exposes `run_server()` and `run_client()`, each gated behind Cargo features (`server`/`client`). Only the configured feature's code is compiled into each binary — server combat/respawn logic is excluded from client builds. All shared ECS components live in `src/shared.rs`. Server systems in `src/server.rs`, client systems in `src/client.rs`.
 
 **Networking model**: Server-authoritative via `bevy_replicon`. Components marked `Replicated` (spawned server-side) auto-sync to all clients. Client sends `MoveInput` messages (not replicated — uses `add_client_message`). `Position` and `Direction` are server-authoritative and replicated back.
 

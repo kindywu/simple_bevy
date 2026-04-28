@@ -2,15 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub const PORT: u16 = 5000;
-pub const MOVE_SPEED: f32 = 300.0;
 pub const PROTOCOL_ID: u64 = 123456;
-pub const VISIBLE_HALF_WIDTH: f32 = 640.0;
-pub const VISIBLE_HALF_HEIGHT: f32 = 360.0;
-pub const BOUNDARY_MARGIN: f32 = 25.0;
-pub const KILL_SCORE: u32 = 10;
-pub const RESPAWN_DELAY_SECS: f32 = 3.0;
-pub const SAFE_SPAWN_DISTANCE: f32 = 200.0;
-pub const MAX_SPAWN_ATTEMPTS: u32 = 50;
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Position {
@@ -51,39 +43,12 @@ pub struct Score(pub u32);
 #[derive(Component, Clone, Copy, Serialize, Deserialize, Debug)]
 pub struct Dead;
 
-#[derive(Component, Deref, DerefMut)]
-pub struct RespawnTimer(pub Timer);
-
 #[derive(Resource)]
 pub struct LocalClientId(pub u64);
 
 #[derive(Resource, Default)]
-pub struct PlayerCount(pub u32);
+pub struct PlayerCount(#[allow(dead_code)] pub u32);
 
-#[derive(Resource)]
-pub struct ConnectTimer(pub Timer);
-
-#[derive(Resource, Default)]
-pub struct ConnectionState {
-    pub printed_connected: bool,
-}
-
-pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
-    let h = h / 60.0;
-    let i = h.floor() as u32 % 6;
-    let f = h - h.floor();
-    let p = v * (1.0 - s);
-    let q = v * (1.0 - s * f);
-    let t = v * (1.0 - s * (1.0 - f));
-    match i {
-        0 => (v, t, p),
-        1 => (q, v, p),
-        2 => (p, v, t),
-        3 => (p, q, v),
-        4 => (t, p, v),
-        _ => (v, p, q),
-    }
-}
 
 pub fn spawn_render(
     mut commands: Commands,
@@ -127,6 +92,67 @@ pub fn apply_position(
 
 pub fn setup_camera(mut commands: Commands) {
     commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
+}
+
+#[derive(Component)]
+pub struct ScoreboardRoot;
+
+pub fn setup_scoreboard(mut commands: Commands) {
+    commands.spawn((
+        Text::new(""),
+        TextFont::from_font_size(20.0),
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            right: Val::Px(15.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::FlexEnd,
+            row_gap: Val::Px(2.0),
+            ..default()
+        },
+        GlobalZIndex(10),
+        ScoreboardRoot,
+    ));
+}
+
+pub fn update_scoreboard(
+    mut commands: Commands,
+    scoreboard: Query<Entity, With<ScoreboardRoot>>,
+    mut prev_entries: Local<Vec<Entity>>,
+    players: Query<(&PlayerId, &Score, &PlayerColor)>,
+) {
+    let Ok(root) = scoreboard.single() else {
+        return;
+    };
+
+    for &entity in prev_entries.iter() {
+        commands.entity(entity).despawn();
+    }
+    prev_entries.clear();
+
+    let mut player_data: Vec<_> = players.iter().collect();
+    player_data.sort_unstable_by(|a, b| b.1 .0.cmp(&a.1 .0));
+
+    let mut text = "=== Scores ===".to_string();
+    if player_data.is_empty() {
+        text.push_str("\nWaiting...");
+    } else {
+        for (player_id, score, _color) in &player_data {
+            let short_id = player_id.0 % 1000;
+            text.push_str(&format!("\nP{short_id}: {}", score.0));
+        }
+    }
+
+    let entry = commands
+        .spawn((
+            TextSpan(text.into()),
+            TextFont::from_font_size(18.0),
+            TextColor(Color::WHITE),
+        ))
+        .id();
+    commands.entity(entry).set_parent_in_place(root);
+    prev_entries.push(entry);
 }
 
 pub fn update_visibility(

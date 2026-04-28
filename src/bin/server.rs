@@ -1,3 +1,3 @@
 fn main() {
-    simple::run_game(simple::GameMode::Server);
+    simple::run_server();
 }
