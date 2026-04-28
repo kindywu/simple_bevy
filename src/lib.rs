@@ -18,7 +18,12 @@ use shared::{
     apply_position, setup_camera, spawn_render, update_visibility,
 };
 
-fn main() {
+pub enum GameMode {
+    Server,
+    Client,
+}
+
+pub fn run_game(mode: GameMode) {
     let mut app = App::new();
 
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -45,9 +50,8 @@ fn main() {
     app.add_systems(Startup, setup_camera);
     app.add_systems(Update, (spawn_render, apply_position));
 
-    let args: Vec<String> = std::env::args().collect();
-    match args.get(1).map(|s| s.as_str()) {
-        Some("server") => {
+    match mode {
+        GameMode::Server => {
             app.add_observer(server_on_connect);
             app.add_systems(Startup, (start_server, setup_scoreboard));
             app.add_systems(
@@ -64,17 +68,13 @@ fn main() {
             );
             info!("=== 服务端启动 ===");
         }
-        Some("client") => {
+        GameMode::Client => {
             app.add_systems(Startup, (start_client, setup_scoreboard));
             app.add_systems(
                 Update,
                 (client_send_input, check_connection, update_visibility, update_scoreboard),
             );
             info!("=== 客户端启动 ===");
-        }
-        _ => {
-            eprintln!("用法：cargo run -- server | client");
-            std::process::exit(1);
         }
     }
 
