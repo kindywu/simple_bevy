@@ -18,7 +18,7 @@ mod combat;
 mod render;
 mod scoreboard;
 
-use auth::ApiKey;
+use auth::{ApiKey, PlatformConnected, verify_api_key_with_retry};
 use combat::{combat_detection, respawn_dead_players};
 use render::{apply_position, setup_camera, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
@@ -84,12 +84,26 @@ pub fn start_server(world: &mut World) {
     world.insert_resource(transport);
 }
 
+fn verify_platform_connection(api_key: Res<ApiKey>, mut connected: ResMut<PlatformConnected>) {
+    match verify_api_key_with_retry(&api_key.0, 3) {
+        Ok(()) => {
+            info!("平台连接验证成功");
+            connected.0 = true;
+        }
+        Err(msg) => {
+            error!("平台不可用: {msg} — 服务器继续运行，但玩家认证将不可用");
+            connected.0 = false;
+        }
+    }
+}
+
 pub fn server_on_connect(
     trigger: On<Add, ConnectedClient>,
     mut commands: Commands,
     mut count: ResMut<PlayerCount>,
     transport: Res<NetcodeServerTransport>,
     api_key: Res<ApiKey>,
+    platform: Res<PlatformConnected>,
     clients: Query<&NetworkId>,
     mut server: ResMut<RenetServer>,
 ) {
@@ -101,17 +115,24 @@ pub fn server_on_connect(
         if let Some(user_data) = transport.user_data(client_id) {
             let len = user_data.iter().position(|&b| b == 0).unwrap_or(256);
             match serde_json::from_slice::<AuthCredentials>(&user_data[..len]) {
-                Ok(creds) => match auth::validate_credentials(&api_key.0, &creds) {
-                    Ok(username) => {
-                        info!("玩家认证成功: {}", username);
-                        Some(username)
-                    }
-                    Err(msg) => {
-                        error!("认证失败: {} - {}", creds.username, msg);
+                Ok(creds) => {
+                    if !platform.0 {
+                        error!("平台不可用，拒绝玩家 {} 的认证请求", creds.username);
                         server.disconnect(client_id);
                         return;
                     }
-                },
+                    match auth::validate_credentials(&api_key.0, &creds) {
+                        Ok(username) => {
+                            info!("玩家认证成功: {}", username);
+                            Some(username)
+                        }
+                        Err(msg) => {
+                            error!("认证失败: {} - {}", creds.username, msg);
+                            server.disconnect(client_id);
+                            return;
+                        }
+                    }
+                }
                 Err(_) => {
                     info!("玩家连接(无认证信息) ID: {}", id_num);
                     None
@@ -229,9 +250,10 @@ pub fn run(api_key: &str) {
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
     app.insert_resource(ApiKey(api_key.to_string()));
+    app.insert_resource(PlatformConnected(true));
 
     app.add_observer(server_on_connect);
-    app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard));
+    app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard, verify_platform_connection));
     app.add_systems(
         Update,
         (

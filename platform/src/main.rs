@@ -25,15 +25,21 @@ struct ApiKeyDb {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-struct AuthRequest {
+struct LoginRequest {
     username: String,
     password: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-struct AuthResponse {
+struct LoginResponse {
     success: bool,
     username: String,
+    message: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+struct KeyVerifyResponse {
+    valid: bool,
     message: String,
 }
 
@@ -80,37 +86,60 @@ fn load_api_keys(path: &str) -> ApiKeyDb {
     serde_json::from_str(&contents).unwrap_or(ApiKeyDb { keys: vec![] })
 }
 
-async fn auth_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(creds): Json<AuthRequest>,
-) -> (StatusCode, Json<AuthResponse>) {
-    let auth_header = headers
+fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
+    headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
+        .and_then(|v| v.strip_prefix("Bearer "))
+}
 
-    let token = match auth_header {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(AuthResponse {
-                    success: false,
-                    username: creds.username,
-                    message: "Missing API key".into(),
-                }),
-            );
-        }
-    };
-
+fn check_api_key(state: &AppState, headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
+    let token = extract_api_key(headers).ok_or((
+        StatusCode::UNAUTHORIZED,
+        "Missing API key".into(),
+    ))?;
     if !state.api_keys.keys.iter().any(|k| k == token) {
+        return Err((StatusCode::UNAUTHORIZED, "Invalid API key".into()));
+    }
+    Ok(())
+}
+
+/// 验证服务端 API Key 是否有效
+async fn verify_key_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<KeyVerifyResponse>) {
+    match check_api_key(&state, &headers) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(KeyVerifyResponse {
+                valid: true,
+                message: "API key is valid".into(),
+            }),
+        ),
+        Err((code, msg)) => (
+            code,
+            Json(KeyVerifyResponse {
+                valid: false,
+                message: msg,
+            }),
+        ),
+    }
+}
+
+/// 验证玩家登录凭据
+async fn login_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(creds): Json<LoginRequest>,
+) -> (StatusCode, Json<LoginResponse>) {
+    if let Err((code, msg)) = check_api_key(&state, &headers) {
         return (
-            StatusCode::UNAUTHORIZED,
-            Json(AuthResponse {
+            code,
+            Json(LoginResponse {
                 success: false,
                 username: creds.username,
-                message: "Invalid API key".into(),
+                message: msg,
             }),
         );
     }
@@ -118,7 +147,7 @@ async fn auth_handler(
     if creds.username.is_empty() || creds.password.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(AuthResponse {
+            Json(LoginResponse {
                 success: false,
                 username: creds.username,
                 message: "Username and password are required".into(),
@@ -136,7 +165,7 @@ async fn auth_handler(
     if valid {
         (
             StatusCode::OK,
-            Json(AuthResponse {
+            Json(LoginResponse {
                 success: true,
                 username: creds.username.clone(),
                 message: "Authentication successful".into(),
@@ -145,7 +174,7 @@ async fn auth_handler(
     } else {
         (
             StatusCode::FORBIDDEN,
-            Json(AuthResponse {
+            Json(LoginResponse {
                 success: false,
                 username: creds.username,
                 message: "Invalid username or password".into(),
@@ -181,7 +210,8 @@ async fn main() {
     };
 
     let app = Router::new()
-        .route("/api/auth", post(auth_handler))
+        .route("/api/auth/verify-key", post(verify_key_handler))
+        .route("/api/auth/login", post(login_handler))
         .route("/api/health", get(health_handler))
         .with_state(state);
 
