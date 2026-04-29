@@ -14,13 +14,18 @@ use std::{
 };
 
 mod auth;
-mod combat;
+mod bullet;
+pub(crate) mod combat;
 mod render;
 mod scoreboard;
 
 use auth::{ApiKey, PlatformConnected, verify_api_key_with_retry};
+use bullet::{
+    ShootCooldown, bullet_lifetime, bullet_player_collision, move_bullets, server_handle_shoot,
+    tick_cooldowns,
+};
 use combat::{combat_detection, respawn_dead_players};
-use render::{apply_position, setup_camera, spawn_render};
+use render::{apply_position, setup_camera, spawn_bullet_render, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
 pub const MOVE_SPEED: f32 = 300.0;
@@ -161,6 +166,12 @@ pub fn server_on_connect(
         Direction::default(),
         PlayerColor { r, g, b },
         Score::default(),
+        Health(MAX_HP),
+        ShootCooldown({
+            let mut t = Timer::from_seconds(SHOOT_COOLDOWN_SECS, TimerMode::Once);
+            t.tick(std::time::Duration::from_secs_f32(SHOOT_COOLDOWN_SECS));
+            t
+        }),
     ));
 
     info!("玩家连接 ID: {}", id_num);
@@ -246,8 +257,12 @@ pub fn run(api_key: &str) {
     app.replicate::<Score>();
     app.replicate::<Dead>();
     app.replicate::<PlayerName>();
+    app.replicate::<Health>();
+    app.replicate::<Bullet>();
+    app.replicate::<BulletOwner>();
 
     app.add_client_message::<MoveInput>(Channel::Ordered);
+    app.add_client_message::<ShootInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
     app.insert_resource(ApiKey(api_key.to_string()));
     app.insert_resource(PlatformConnected(true));
@@ -258,9 +273,15 @@ pub fn run(api_key: &str) {
         Update,
         (
             spawn_render,
+            tick_cooldowns,
             server_handle_input,
+            server_handle_shoot,
+            spawn_bullet_render,
+            move_bullets,
             clamp_positions,
+            bullet_player_collision,
             combat_detection,
+            bullet_lifetime,
             respawn_dead_players,
             apply_position,
             update_visibility,

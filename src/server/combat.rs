@@ -1,5 +1,5 @@
 use crate::server::{RespawnTimer, BOUNDARY_MARGIN, KILL_SCORE, MAX_SPAWN_ATTEMPTS, RESPAWN_DELAY_SECS, SAFE_SPAWN_DISTANCE, VISIBLE_HALF_HEIGHT, VISIBLE_HALF_WIDTH};
-use crate::shared::{Dead, Direction, Position, Score};
+use crate::shared::{Dead, Direction, Health, Position, Score, MAX_HP};
 use bevy::prelude::*;
 use rand::RngExt;
 use std::collections::HashSet;
@@ -11,7 +11,7 @@ fn tip_world(pos: &Position, dir: &Direction) -> Point2 {
     (pos.x - 20.0 * sin_a, pos.y + 20.0 * cos_a)
 }
 
-fn triangle_vertices(pos: &Position, dir: &Direction) -> (Point2, Point2, Point2) {
+pub(crate) fn triangle_vertices(pos: &Position, dir: &Direction) -> (Point2, Point2, Point2) {
     let (sin_a, cos_a) = dir.angle.sin_cos();
     let px = pos.x;
     let py = pos.y;
@@ -27,7 +27,7 @@ fn triangle_vertices(pos: &Position, dir: &Direction) -> (Point2, Point2, Point2
     (tip, bl, br)
 }
 
-fn point_in_triangle(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
+pub(crate) fn point_in_triangle(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
     let (px, py) = p;
     let (ax, ay) = a;
     let (bx, by) = b;
@@ -170,7 +170,7 @@ pub fn respawn_dead_players(
             commands
                 .entity(entity)
                 .remove::<(Dead, RespawnTimer)>()
-                .insert(new_pos);
+                .insert((new_pos, Health(MAX_HP)));
             info!("♻️ {:?} 重生在 ({:.0}, {:.0})", entity, new_pos.x, new_pos.y);
         }
     }

@@ -57,3 +57,21 @@ pub struct AuthResponse {
     pub username: String,
     pub message: String,
 }
+
+#[derive(Message, Clone, Serialize, Deserialize)]
+pub struct ShootInput(pub u8);
+
+#[derive(Component, Clone, Copy, Serialize, Deserialize)]
+pub struct Health(pub u8);
+
+#[derive(Component, Clone, Copy, Serialize, Deserialize)]
+pub struct Bullet;
+
+#[derive(Component, Clone, Copy, Serialize, Deserialize)]
+pub struct BulletOwner(pub u64);
+
+pub const MAX_HP: u8 = 3;
+pub const MAX_BULLETS_PER_PLAYER: usize = 5;
+pub const SHOOT_COOLDOWN_SECS: f32 = 0.3;
+pub const BULLET_SPEED: f32 = 500.0;
+pub const BULLET_LIFETIME_SECS: f32 = 2.0;

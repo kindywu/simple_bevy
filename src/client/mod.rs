@@ -8,7 +8,7 @@ mod render;
 mod scoreboard;
 
 use login::{GameState, LoginData, cleanup_login, handle_connect, handle_login_input, render_login_text, setup_login_screen};
-use render::{spawn_render, apply_position, update_visibility};
+use render::{spawn_render, spawn_bullet_render, apply_position, update_visibility};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
 #[derive(Resource)]
@@ -24,7 +24,8 @@ pub struct LocalClientId(pub u64);
 
 pub fn client_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut writer: MessageWriter<MoveInput>,
+    mut move_writer: MessageWriter<MoveInput>,
+    mut shoot_writer: MessageWriter<ShootInput>,
     mut local_players: Query<&mut Direction, (With<render::LocalPlayer>, Without<Dead>)>,
 ) {
     let mut dx: f32 = 0.0;
@@ -43,6 +44,10 @@ pub fn client_send_input(
         dx += 1.0;
     }
 
+    if keyboard.just_pressed(KeyCode::Space) && local_players.iter().next().is_some() {
+        shoot_writer.write(ShootInput(0));
+    }
+
     if dx != 0.0 || dy != 0.0 {
         let len: f32 = (dx * dx + dy * dy).sqrt();
         let ndx = dx / len;
@@ -53,7 +58,7 @@ pub fn client_send_input(
             dir.angle = angle;
         }
 
-        writer.write(MoveInput { dx: ndx, dy: ndy });
+        move_writer.write(MoveInput { dx: ndx, dy: ndy });
     }
 }
 
@@ -115,8 +120,12 @@ pub fn run() {
     app.replicate::<Score>();
     app.replicate::<Dead>();
     app.replicate::<PlayerName>();
+    app.replicate::<Health>();
+    app.replicate::<Bullet>();
+    app.replicate::<BulletOwner>();
 
     app.add_client_message::<MoveInput>(Channel::Ordered);
+    app.add_client_message::<ShootInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
 
     app.init_state::<GameState>();
@@ -131,7 +140,7 @@ pub fn run() {
     );
     app.add_systems(
         Update,
-        (client_send_input, check_connection, spawn_render, apply_position, update_visibility, update_scoreboard)
+        (client_send_input, check_connection, spawn_render, spawn_bullet_render, apply_position, update_visibility, update_scoreboard)
             .run_if(in_state(GameState::InGame)),
     );
 
