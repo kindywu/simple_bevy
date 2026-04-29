@@ -62,7 +62,7 @@ pub fn client_send_input(
     }
 }
 
-pub fn check_connection(
+pub(crate) fn check_connection(
     time: Res<Time>,
     mut timer: ResMut<ConnectTimer>,
     client: Res<RenetClient>,
