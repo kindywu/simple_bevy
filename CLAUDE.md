@@ -5,9 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
+# Platform auth service (start this first)
+cargo run --manifest-path platform/Cargo.toml
+
 # Core multiplayer game (two separate binaries)
-cargo run --bin server    # Start server (listens on UDP :5000)
-cargo run --bin client    # Start client (connects to localhost:5000)
+cargo run --bin server    # Start server (reads .env for PLATFORM_API_KEY)
+cargo run --bin client    # Start client (login UI → game)
 
 # Secure client release (excludes server code from binary)
 cargo build --bin client client --release
@@ -27,9 +30,20 @@ There are no tests in this project.
 
 ## Architecture
 
+### Platform (`platform/`)
+
+Independent crate — axum HTTP server on `127.0.0.1:3001`. Stores player credentials in `players.json` (SHA-256 hashed passwords) and valid server API keys in `api_keys.json`. The game server calls `POST /api/auth` with an `Authorization: Bearer <key>` header to validate players before spawning them. Default users: kindy, ananda, martin, amy (password = username).
+
 ### Core Game (`src/`)
 
-Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared library (`src/lib.rs`). `lib.rs` exposes `run_server()` and `run_client()`, each gated behind Cargo features (`server`/`client`). Only the configured feature's code is compiled into each binary — server combat/respawn logic is excluded from client builds. All shared ECS components live in `src/shared.rs`. Server systems in `src/server.rs`, client systems in `src/client.rs`.
+Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared library (`src/lib.rs`). The library exposes `run_server(api_key)` and `run_client()`. All shared ECS components live in `src/shared.rs`. Server systems in `src/server/`, client systems in `src/client/`.
+
+**Authentication flow**:
+1. Client starts in `GameState::Login` — shows bevy_ui login screen (two-step: username, then password)
+2. User submits → client creates renet connection with credentials serialized into `ClientAuthentication::Unsecure.user_data` (256-byte field)
+3. Server's `server_on_connect` extracts credentials via `NetcodeServerTransport::user_data()`, calls platform `/api/auth` to validate
+4. On success: spawns player entity with `PlayerName`; on failure: calls `server.disconnect()` to reject client
+5. Server reads `PLATFORM_API_KEY` from `.env` file at project root
 
 **Networking model**: Server-authoritative via `bevy_replicon`. Components marked `Replicated` (spawned server-side) auto-sync to all clients. Client sends `MoveInput` messages (not replicated — uses `add_client_message`). `Position` and `Direction` are server-authoritative and replicated back.
 
@@ -37,16 +51,20 @@ Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared libra
 - `Position` (x, y) — replicated, server-authoritative
 - `Direction` (angle) — replicated, server-authoritative, rotation around Z
 - `PlayerId(u64)` — replicated, set from client entity bits
+- `PlayerName(String)` — replicated, set from platform validation
 - `PlayerColor` (r, g, b) — replicated, derived from `PlayerCount` via golden angle
 - `MoveInput` (dx, dy) — message type, client→server
 - `LocalSprite` / `LocalPlayer` — marker components, client-side only
+- `AuthCredentials` / `AuthResponse` — auth serialization types, shared between server and platform
 
 **Key systems**:
 - `spawn_render` — creates `Triangle2d` mesh + `LocalPlayer` marker for local player
 - `apply_position` — syncs `Position` (translation) + `Direction` (Z rotation) to `Transform`
 - `server_handle_input` — reads `MoveInput` messages, updates Position and Direction
 - `client_send_input` — reads keyboard, normalizes input, sends `MoveInput`, updates local Direction
-- `check_connection` — 5-second timeout, panics if not connected
+- `check_connection` — 5-second timeout or server disconnect → transitions back to `GameState::Login`
+- `server_on_connect` — validates credentials via platform API, spawns player on success
+- Login UI systems (`handle_login_input`, `render_login_text`, `handle_connect`) — only run in `GameState::Login`
 
 **Direction/rotation logic**: Angle is set to `atan2(dy, dx) - FRAC_PI_2` so the triangle's tip points in the movement direction. On the client, local Direction is updated immediately for responsive feel; on the server, Direction is only updated when input is non-zero.
 
@@ -69,13 +87,18 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 | `bevy` 0.18                          | Game engine (all examples)                         |
 | `bevy_replicon`                      | Network replication (core game, single example)    |
 | `bevy_replicon_renet` / `bevy_renet` | renet transport layer                              |
-| `axum` + `tokio`                     | REST API (finance example only)                    |
+| `axum` + `tokio`                     | REST API (platform, finance example)               |
 | `sled`                               | Embedded DB for persistence (finance example only) |
 | `serde` + `bincode`                  | Serialization (all binaries)                       |
+| `serde_json`                         | JSON serialization (credentials, platform API)     |
+| `ureq`                               | HTTP client (server→platform auth calls)           |
+| `sha2` + `hex`                       | Password hashing (platform only)                   |
 
 ## Code Patterns
 
-- **World-based startup**: Server/client startup functions take `&mut World` (not `Commands`), because they insert resources into the world before the schedule runs. Systems use `Commands` normally.
+- **World-based startup**: Server startup function takes `&mut World` (not `Commands`), because it inserts resources into the world before the schedule runs. Client startup uses systems and `Commands`.
 - **ClientId mapping**: `client_id_to_u64()` converts `ClientId::Client(entity)` to `entity.to_bits()` for matching against `PlayerId.0`. This is how server maps incoming messages to the correct player entity.
 - **Golden angle color generation**: `hue = (count * 137.508) % 360` produces well-distributed distinct hues for successive players.
+- **State-based UI**: Client uses `GameState` enum (`Login`, `InGame`) to gate systems with `run_if(in_state(...))`. Login UI is two-step: username prompt, then password prompt.
+- **Credentials in user_data**: Client serializes `AuthCredentials` as JSON into the 256-byte `user_data` field of `ClientAuthentication::Unsecure`. Server extracts it via `NetcodeServerTransport::user_data(client_id)`.
 - **Editions**: Uses Rust edition 2024 (`Cargo.toml`).

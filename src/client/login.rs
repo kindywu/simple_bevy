@@ -21,13 +21,13 @@ pub enum GameState {
 pub struct LoginData {
     pub username: String,
     pub password: String,
-    pub focused: FocusField,
+    pub step: LoginStep,
     pub status: Option<String>,
     pub connect_requested: bool,
 }
 
 #[derive(Default, PartialEq)]
-pub enum FocusField {
+pub enum LoginStep {
     #[default]
     Username,
     Password,
@@ -82,7 +82,21 @@ fn char_for_key(key: KeyCode) -> Option<char> {
     }
 }
 
-pub fn setup_login_screen(mut commands: Commands) {
+pub fn setup_login_screen(
+    mut commands: Commands,
+    mut login_data: ResMut<LoginData>,
+    asset_server: Res<AssetServer>,
+    mut font_handle: Local<Option<Handle<Font>>>,
+) {
+    // Reset login state on (re-)entry
+    login_data.step = LoginStep::Username;
+    login_data.status = None;
+    login_data.connect_requested = false;
+
+    let font = font_handle
+        .get_or_insert_with(|| asset_server.load("fonts/msyh.ttc"))
+        .clone();
+
     commands
         .spawn((
             LoginRoot,
@@ -107,56 +121,96 @@ pub fn setup_login_screen(mut commands: Commands) {
                     ..default()
                 })
                 .with_children(|panel| {
+                    // Title
                     panel.spawn((
-                        LoginText,
                         Text::new("Login"),
-                        TextFont::from_font_size(36.0),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 36.0,
+                            ..default()
+                        },
                         TextColor(Color::WHITE),
                     ));
 
+                    // Username row
                     panel.spawn((
                         LoginText,
-                        Text::new("Username:"),
-                        TextFont::from_font_size(18.0),
+                        Text::new(""),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                    ));
+
+                    // Prompt
+                    panel.spawn((
+                        LoginText,
+                        Text::new(""),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 18.0,
+                            ..default()
+                        },
                         TextColor(Color::srgb(0.7, 0.7, 0.7)),
                     ));
 
+                    // Input field
                     panel.spawn((
                         LoginText,
                         Text::new(""),
-                        TextFont::from_font_size(24.0),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 28.0,
+                            ..default()
+                        },
                         TextColor(Color::WHITE),
                     ));
 
-                    panel.spawn((
-                        LoginText,
-                        Text::new("Password:"),
-                        TextFont::from_font_size(18.0),
-                        TextColor(Color::srgb(0.7, 0.7, 0.7)),
-                    ));
-
+                    // Status/error
                     panel.spawn((
                         LoginText,
                         Text::new(""),
-                        TextFont::from_font_size(24.0),
-                        TextColor(Color::WHITE),
-                    ));
-
-                    panel.spawn((
-                        LoginText,
-                        Text::new(""),
-                        TextFont::from_font_size(16.0),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 16.0,
+                            ..default()
+                        },
                         TextColor(Color::srgb(1.0, 0.3, 0.3)),
-                    ));
-
-                    panel.spawn((
-                        LoginText,
-                        Text::new("[Tab] Switch field  [Enter] Connect"),
-                        TextFont::from_font_size(14.0),
-                        TextColor(Color::srgb(0.4, 0.4, 0.4)),
                     ));
                 });
         });
+}
+
+pub fn render_login_text(
+    login_data: Res<LoginData>,
+    mut texts: Query<&mut Text, With<LoginText>>,
+) {
+    let mut iter = texts.iter_mut();
+    let mut username_row = iter.next().unwrap();
+    let mut prompt = iter.next().unwrap();
+    let mut input_field = iter.next().unwrap();
+    let mut status = iter.next().unwrap();
+
+    if login_data.username.is_empty() {
+        **username_row = String::new();
+    } else {
+        **username_row = format!("用户: {}", login_data.username);
+    }
+
+    match login_data.step {
+        LoginStep::Username => {
+            **prompt = "请输入用户名".to_string();
+            **input_field = format!("{}_", login_data.username);
+        }
+        LoginStep::Password => {
+            **prompt = "请输入密码".to_string();
+            **input_field = format!("{}_", "*".repeat(login_data.password.len()));
+        }
+    }
+
+    **status = login_data.status.clone().unwrap_or_default();
 }
 
 pub fn handle_login_input(
@@ -169,22 +223,13 @@ pub fn handle_login_input(
 
     let just_pressed = |code: KeyCode| -> bool { keys.just_pressed(code) };
 
-    if just_pressed(KeyCode::Tab) {
-        login_data.focused = match login_data.focused {
-            FocusField::Username => FocusField::Password,
-            FocusField::Password => FocusField::Username,
-        };
-        login_data.status = None;
-        return;
-    }
-
     if just_pressed(KeyCode::Backspace) {
         login_data.status = None;
-        match login_data.focused {
-            FocusField::Username => {
+        match login_data.step {
+            LoginStep::Username => {
                 login_data.username.pop();
             }
-            FocusField::Password => {
+            LoginStep::Password => {
                 login_data.password.pop();
             }
         }
@@ -192,11 +237,23 @@ pub fn handle_login_input(
     }
 
     if just_pressed(KeyCode::Enter) {
-        if login_data.username.is_empty() || login_data.password.is_empty() {
-            login_data.status = Some("Enter username and password".into());
-        } else {
-            login_data.connect_requested = true;
-            login_data.status = Some("Connecting...".into());
+        match login_data.step {
+            LoginStep::Username => {
+                if login_data.username.is_empty() {
+                    login_data.status = Some("请输入用户名".into());
+                } else {
+                    login_data.status = None;
+                    login_data.step = LoginStep::Password;
+                }
+            }
+            LoginStep::Password => {
+                if login_data.password.is_empty() {
+                    login_data.status = Some("请输入密码".into());
+                } else {
+                    login_data.connect_requested = true;
+                    login_data.status = Some("Connecting...".into());
+                }
+            }
         }
         return;
     }
@@ -217,43 +274,13 @@ pub fn handle_login_input(
         if just_pressed(code) {
             if let Some(ch) = char_for_key(code) {
                 login_data.status = None;
-                match login_data.focused {
-                    FocusField::Username => login_data.username.push(ch),
-                    FocusField::Password => login_data.password.push(ch),
+                match login_data.step {
+                    LoginStep::Username => login_data.username.push(ch),
+                    LoginStep::Password => login_data.password.push(ch),
                 }
             }
         }
     }
-}
-
-pub fn render_login_text(
-    login_data: Res<LoginData>,
-    mut texts: Query<&mut Text, With<LoginText>>,
-) {
-    let mut iter = texts.iter_mut();
-    let _ = iter.next(); // title
-    let _ = iter.next(); // "Username:"
-    let mut username_text = iter.next().unwrap();
-    let _ = iter.next(); // "Password:"
-    let mut password_text = iter.next().unwrap();
-    let mut status_text = iter.next().unwrap();
-    let _ = iter.next(); // help text
-
-    let username_display = if login_data.focused == FocusField::Username {
-        format!("{}|", login_data.username)
-    } else {
-        login_data.username.clone()
-    };
-
-    let password_display = if login_data.focused == FocusField::Password {
-        format!("{}|", "*".repeat(login_data.password.len()))
-    } else {
-        "*".repeat(login_data.password.len())
-    };
-
-    **username_text = username_display;
-    **password_text = password_display;
-    **status_text = login_data.status.clone().unwrap_or_default();
 }
 
 pub fn handle_connect(

@@ -39,7 +39,7 @@ pub fn update_scoreboard(
     prev_entries.clear();
 
     let font = font_handle
-        .get_or_insert_with(|| asset_server.load("C:/Windows/Fonts/msyh.ttc"))
+        .get_or_insert_with(|| asset_server.load("fonts/msyh.ttc"))
         .clone();
 
     let mut player_data: Vec<_> = players.iter().collect();

@@ -1,3 +1,4 @@
 /target
-trading.db
 /platform/target
+trading.db
+.env

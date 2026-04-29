@@ -4,10 +4,11 @@ use crate::shared::{PlayerId, Score, PlayerColor, PlayerName};
 #[derive(Component)]
 pub struct ScoreboardRoot;
 
-pub fn setup_scoreboard(mut commands: Commands) {
+pub fn setup_scoreboard(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font = asset_server.load("fonts/msyh.ttc");
     commands.spawn((
         Text::new(""),
-        TextFont::from_font_size(20.0),
+        TextFont { font, font_size: 20.0, ..default() },
         TextColor(Color::WHITE),
         Node {
             position_type: PositionType::Absolute,
@@ -28,6 +29,7 @@ pub fn update_scoreboard(
     scoreboard: Query<Entity, With<ScoreboardRoot>>,
     mut prev_entries: Local<Vec<Entity>>,
     players: Query<(&PlayerId, &Score, &PlayerColor, &PlayerName)>,
+    asset_server: Res<AssetServer>,
 ) {
     let Ok(root) = scoreboard.single() else {
         return;
@@ -53,7 +55,11 @@ pub fn update_scoreboard(
     let entry = commands
         .spawn((
             TextSpan(text.into()),
-            TextFont::from_font_size(18.0),
+            TextFont {
+                font: asset_server.load("fonts/msyh.ttc"),
+                font_size: 18.0,
+                ..default()
+            },
             TextColor(Color::WHITE),
         ))
         .id();
