@@ -64,11 +64,17 @@ pub struct ShootInput(pub u8);
 #[derive(Component, Clone, Copy, Serialize, Deserialize)]
 pub struct Health(pub u8);
 
-#[derive(Component, Clone, Copy, Serialize, Deserialize)]
-pub struct Bullet;
-
-#[derive(Component, Clone, Copy, Serialize, Deserialize)]
-pub struct BulletOwner(pub u64);
+#[derive(Component, Clone, Copy, Serialize, Deserialize, Debug)]
+pub struct Bullet {
+    pub owner: u64,
+    pub x: f32,
+    pub y: f32,
+    pub angle: f32,
+    pub speed: f32,
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
 
 pub const MAX_HP: u8 = 3;
 pub const MAX_BULLETS_PER_PLAYER: usize = 5;

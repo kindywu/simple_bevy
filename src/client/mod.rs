@@ -8,7 +8,7 @@ mod render;
 mod scoreboard;
 
 use login::{GameState, LoginData, cleanup_login, handle_connect, handle_login_input, render_login_text, setup_login_screen};
-use render::{spawn_render, spawn_bullet_render, apply_position, update_visibility};
+use render::{apply_bullet_position, apply_position, spawn_bullet_render, spawn_render, update_visibility};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
 #[derive(Resource)]
@@ -122,7 +122,6 @@ pub fn run() {
     app.replicate::<PlayerName>();
     app.replicate::<Health>();
     app.replicate::<Bullet>();
-    app.replicate::<BulletOwner>();
 
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.add_client_message::<ShootInput>(Channel::Ordered);
@@ -140,7 +139,8 @@ pub fn run() {
     );
     app.add_systems(
         Update,
-        (client_send_input, check_connection, spawn_render, spawn_bullet_render, apply_position, update_visibility, update_scoreboard)
+        (client_send_input, check_connection, spawn_render, spawn_bullet_render, apply_position, apply_bullet_position, update_visibility, update_scoreboard)
+            .chain()
             .run_if(in_state(GameState::InGame)),
     );
 

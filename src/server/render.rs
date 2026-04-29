@@ -36,9 +36,9 @@ pub fn spawn_bullet_render(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    new_bullets: Query<(Entity, &PlayerColor), (With<Bullet>, Without<SpriteReady>)>,
+    new_bullets: Query<(Entity, &Bullet), Without<SpriteReady>>,
 ) {
-    for (entity, color) in new_bullets.iter() {
+    for (entity, bullet) in new_bullets.iter() {
         let mesh = Triangle2d::new(
             Vec2::new(0.0, 6.0),
             Vec2::new(-4.0, -6.0),
@@ -47,7 +47,7 @@ pub fn spawn_bullet_render(
         commands.entity(entity).insert((
             SpriteReady,
             Mesh2d(meshes.add(mesh)),
-            MeshMaterial2d(materials.add(Color::srgb(color.r, color.g, color.b))),
+            MeshMaterial2d(materials.add(Color::srgb(bullet.r, bullet.g, bullet.b))),
             Transform::default(),
             GlobalTransform::default(),
             Visibility::default(),
@@ -62,5 +62,14 @@ pub fn apply_position(
     for (pos, dir, mut transform) in entities.iter_mut() {
         transform.translation = Vec3::new(pos.x, pos.y, 0.0);
         transform.rotation = Quat::from_rotation_z(dir.angle);
+    }
+}
+
+pub fn apply_bullet_position(
+    mut bullets: Query<(&Bullet, &mut Transform)>,
+) {
+    for (bullet, mut transform) in bullets.iter_mut() {
+        transform.translation = Vec3::new(bullet.x, bullet.y, 0.0);
+        transform.rotation = Quat::from_rotation_z(bullet.angle);
     }
 }

@@ -25,7 +25,7 @@ use bullet::{
     tick_cooldowns,
 };
 use combat::{combat_detection, respawn_dead_players};
-use render::{apply_position, setup_camera, spawn_bullet_render, spawn_render};
+use render::{apply_bullet_position, apply_position, setup_camera, spawn_bullet_render, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
 pub const MOVE_SPEED: f32 = 300.0;
@@ -113,10 +113,11 @@ pub fn server_on_connect(
     mut server: ResMut<RenetServer>,
 ) {
     let client_entity = trigger.event_target();
-    let id_num = client_entity.to_bits();
+    let mut id_num = client_entity.to_bits();
 
     let validated_name = if let Ok(network_id) = clients.get(client_entity) {
         let client_id = network_id.get();
+        id_num = client_id.into();
         if let Some(user_data) = transport.user_data(client_id) {
             let len = user_data.iter().position(|&b| b == 0).unwrap_or(256);
             match serde_json::from_slice::<AuthCredentials>(&user_data[..len]) {
@@ -180,10 +181,11 @@ pub fn server_on_connect(
 pub fn server_handle_input(
     mut move_msgs: MessageReader<FromClient<MoveInput>>,
     mut players: Query<(&PlayerId, &mut Position, &mut Direction), Without<Dead>>,
+    clients: Query<&NetworkId>,
     time: Res<Time>,
 ) {
     for FromClient { client_id, message } in move_msgs.read() {
-        let sender_id = client_id_to_u64(*client_id);
+        let sender_id = client_id_to_u64(*client_id, &clients);
         for (player_id, mut pos, mut dir) in players.iter_mut() {
             if player_id.0 == sender_id {
                 pos.x += message.dx * MOVE_SPEED * time.delta_secs();
@@ -207,10 +209,13 @@ pub fn clamp_positions(mut players: Query<&mut Position, (With<PlayerId>, Withou
     }
 }
 
-fn client_id_to_u64(id: ClientId) -> u64 {
+fn client_id_to_u64(id: ClientId, clients: &Query<&NetworkId>) -> u64 {
     match id {
         ClientId::Server => 0,
-        ClientId::Client(entity) => entity.to_bits(),
+        ClientId::Client(entity) => clients
+            .get(entity)
+            .map(|id| id.get().into())
+            .unwrap_or_else(|_| entity.to_bits()),
     }
 }
 
@@ -259,7 +264,6 @@ pub fn run(api_key: &str) {
     app.replicate::<PlayerName>();
     app.replicate::<Health>();
     app.replicate::<Bullet>();
-    app.replicate::<BulletOwner>();
 
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.add_client_message::<ShootInput>(Channel::Ordered);
@@ -284,6 +288,7 @@ pub fn run(api_key: &str) {
             bullet_lifetime,
             respawn_dead_players,
             apply_position,
+            apply_bullet_position,
             update_visibility,
             update_scoreboard,
         )

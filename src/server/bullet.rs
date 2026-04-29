@@ -4,7 +4,7 @@ use crate::server::{
 };
 use crate::shared::*;
 use bevy::prelude::*;
-use bevy_replicon::prelude::*;
+use bevy_replicon::{prelude::*, shared::backend::connected_client::NetworkId};
 
 use super::combat::{point_in_triangle, triangle_vertices};
 
@@ -31,10 +31,11 @@ pub fn server_handle_shoot(
         &PlayerColor,
         &mut ShootCooldown,
     ), Without<Dead>>,
-    bullets: Query<&BulletOwner>,
+    clients: Query<&NetworkId>,
+    bullets: Query<&Bullet>,
 ) {
     for FromClient { client_id, message: _ } in shoot_msgs.read() {
-        let sender_id = client_id_to_u64(*client_id);
+        let sender_id = client_id_to_u64(*client_id, &clients);
 
         let Some((_player_entity, _pid, pos, dir, color, mut cooldown)) = players
             .iter_mut()
@@ -49,7 +50,7 @@ pub fn server_handle_shoot(
 
         let bullet_count = bullets
             .iter()
-            .filter(|owner| owner.0 == sender_id)
+            .filter(|b| b.owner == sender_id)
             .count();
         if bullet_count >= MAX_BULLETS_PER_PLAYER {
             continue;
@@ -62,19 +63,18 @@ pub fn server_handle_shoot(
         let tip_y = pos.y + 20.0 * cos_a;
 
         info!(
-            "🔫 发射子弹: 玩家={} pos=({:.0},{:.0}) tip=({:.0},{:.0}) angle={:.2} color=({:.2},{:.2},{:.2})",
-            sender_id, pos.x, pos.y, tip_x, tip_y, dir.angle, color.r, color.g, color.b
+            "🔫 发射子弹: owner={} pos=({:.0},{:.0}) angle={:.2} color=({:.2},{:.2},{:.2})",
+            sender_id, tip_x, tip_y, dir.angle, color.r, color.g, color.b
         );
 
         commands.spawn((
             Replicated,
-            Bullet,
-            BulletOwner(sender_id),
-            Position { x: tip_x, y: tip_y },
-            Direction {
+            Bullet {
+                owner: sender_id,
+                x: tip_x,
+                y: tip_y,
                 angle: dir.angle,
-            },
-            PlayerColor {
+                speed: BULLET_SPEED,
                 r: color.r,
                 g: color.g,
                 b: color.b,
@@ -90,24 +90,20 @@ pub fn server_handle_shoot(
 pub fn move_bullets(
     mut commands: Commands,
     time: Res<Time>,
-    mut bullets: Query<(Entity, &Direction, &mut Position), With<Bullet>>,
+    mut bullets: Query<(Entity, &mut Bullet)>,
 ) {
-    let count = bullets.iter().count();
-    if count > 0 {
-        debug!("子弹移动: {} 颗子弹活跃", count);
-    }
     let dt = time.delta_secs();
     let min_x = -VISIBLE_HALF_WIDTH + BOUNDARY_MARGIN;
     let max_x = VISIBLE_HALF_WIDTH - BOUNDARY_MARGIN;
     let min_y = -VISIBLE_HALF_HEIGHT + BOUNDARY_MARGIN;
     let max_y = VISIBLE_HALF_HEIGHT - BOUNDARY_MARGIN;
 
-    for (entity, dir, mut pos) in bullets.iter_mut() {
-        let (sin_a, cos_a) = dir.angle.sin_cos();
-        pos.x += -sin_a * BULLET_SPEED * dt;
-        pos.y += cos_a * BULLET_SPEED * dt;
+    for (entity, mut bullet) in bullets.iter_mut() {
+        let (sin_a, cos_a) = bullet.angle.sin_cos();
+        bullet.x += -sin_a * bullet.speed * dt;
+        bullet.y += cos_a * bullet.speed * dt;
 
-        if pos.x < min_x || pos.x > max_x || pos.y < min_y || pos.y > max_y {
+        if bullet.x < min_x || bullet.x > max_x || bullet.y < min_y || bullet.y > max_y {
             commands.entity(entity).despawn();
         }
     }
@@ -116,7 +112,7 @@ pub fn move_bullets(
 pub fn bullet_lifetime(
     mut commands: Commands,
     time: Res<Time>,
-    mut bullets: Query<(Entity, &mut BulletLifetime)>,
+    mut bullets: Query<(Entity, &mut BulletLifetime), With<Bullet>>,
 ) {
     for (entity, mut lifetime) in bullets.iter_mut() {
         lifetime.0.tick(time.delta());
@@ -128,18 +124,18 @@ pub fn bullet_lifetime(
 
 pub fn bullet_player_collision(
     mut commands: Commands,
-    bullets: Query<(Entity, &Position, &BulletOwner)>,
+    bullets: Query<(Entity, &Bullet)>,
     mut players: Query<(Entity, &PlayerId, &Position, &Direction, &mut Health), Without<Dead>>,
     mut score_query: Query<(&PlayerId, &mut Score)>,
 ) {
-    for (bullet_entity, bullet_pos, bullet_owner) in bullets.iter() {
+    for (bullet_entity, bullet) in bullets.iter() {
         for (player_entity, player_id, player_pos, player_dir, mut health) in players.iter_mut() {
-            if player_id.0 == bullet_owner.0 {
+            if player_id.0 == bullet.owner {
                 continue;
             }
 
             let (v0, v1, v2) = triangle_vertices(player_pos, player_dir);
-            if point_in_triangle((bullet_pos.x, bullet_pos.y), v0, v1, v2) {
+            if point_in_triangle((bullet.x, bullet.y), v0, v1, v2) {
                 commands.entity(bullet_entity).despawn();
 
                 if health.0 > 0 {
@@ -161,7 +157,7 @@ pub fn bullet_player_collision(
                     info!("💀 玩家 {:?} 死亡", player_entity);
 
                     for (pid, mut score) in score_query.iter_mut() {
-                        if pid.0 == bullet_owner.0 {
+                        if pid.0 == bullet.owner {
                             score.0 += KILL_SCORE;
                             info!("🏆 玩家 {:?} 得分: {} (总计: {})", pid.0, KILL_SCORE, score.0);
                             break;
@@ -175,9 +171,12 @@ pub fn bullet_player_collision(
     }
 }
 
-fn client_id_to_u64(id: ClientId) -> u64 {
+fn client_id_to_u64(id: ClientId, clients: &Query<&NetworkId>) -> u64 {
     match id {
         ClientId::Server => 0,
-        ClientId::Client(entity) => entity.to_bits(),
+        ClientId::Client(entity) => clients
+            .get(entity)
+            .map(|id| id.get().into())
+            .unwrap_or_else(|_| entity.to_bits()),
     }
 }
