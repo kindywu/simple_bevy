@@ -2036,6 +2036,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_renet",
+ "bevy_replicon",
+ "bevy_replicon_renet",
+ "serde",
+ "serde_json",
+ "shared",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3564,6 +3577,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lab"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bevy",
+ "bevy_renet",
+ "bevy_replicon",
+ "bevy_replicon_renet",
+ "bincode",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "sled",
+ "tokio",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4437,6 +4467,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "platform"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5099,6 +5141,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_renet",
+ "bevy_replicon",
+ "bevy_replicon_renet",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "shared",
+ "ureq",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5116,6 +5173,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shared"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_replicon",
+ "serde",
 ]
 
 [[package]]
@@ -5155,26 +5221,6 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
-
-[[package]]
-name = "simple"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bevy",
- "bevy_renet",
- "bevy_replicon",
- "bevy_replicon_renet",
- "bincode",
- "hex",
- "rand 0.10.1",
- "serde",
- "serde_json",
- "sha2",
- "sled",
- "tokio",
- "ureq",
-]
 
 [[package]]
 name = "skrifa"

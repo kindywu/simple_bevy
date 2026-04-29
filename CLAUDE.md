@@ -4,26 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Run
 
-```bash
-# Platform auth service (start this first)
-cargo run --manifest-path platform/Cargo.toml
+This is a Cargo workspace with 5 crates: `platform`, `shared`, `server`, `client`, `lab`.
 
-# Core multiplayer game (two separate binaries)
-cargo run --bin server    # Start server (reads .env for PLATFORM_API_KEY)
-cargo run --bin client    # Start client (login UI → game)
+```bash
+# Build everything
+cargo build --workspace
+
+# Platform auth service (start this first)
+cargo run -p platform
+
+# Core multiplayer game
+cargo run -p server    # Start server (reads ../.env for PLATFORM_API_KEY)
+cargo run -p client    # Start client (login UI → game)
 
 # Secure client release (excludes server code from binary)
-cargo build --bin client client --release
+cargo build -p client --release
 
-# Finance trading engine (Bevy ECS + axum REST + sled DB)
-cargo run --example finance
-
-# Standalone single-file multiplayer (no external modules)
-cargo run --example single -- server
-cargo run --example single -- client
-
-# Simplified finance demo
-cargo run --example simple_finance
+# Examples (in lab/examples/)
+cargo run -p lab
+cargo run -p lab --example finance
+cargo run -p lab --example single -- server
+cargo run -p lab --example single -- client
+cargo run -p lab --example simple_finance
 ```
 
 There are no tests in this project.
@@ -34,9 +36,17 @@ There are no tests in this project.
 
 Independent crate — axum HTTP server on `127.0.0.1:3001`. Stores player credentials in `players.json` (SHA-256 hashed passwords) and valid server API keys in `api_keys.json`. The game server calls `POST /api/auth` with an `Authorization: Bearer <key>` header to validate players before spawning them. Default users: kindy, ananda, martin, amy (password = username).
 
-### Core Game (`src/`)
+### Shared (`shared/`)
 
-Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared library (`src/lib.rs`). The library exposes `run_server(api_key)` and `run_client()`. All shared ECS components live in `src/shared.rs`. Server systems in `src/server/`, client systems in `src/client/`.
+Library crate with all shared ECS components, messages, resources, and constants (`src/lib.rs`). Depends on `bevy`, `bevy_replicon`, and `serde`. Both `server` and `client` crates depend on this.
+
+### Server (`server/`)
+
+Binary crate — the game server. Entry point is `src/main.rs`, which contains the `run()` function (app setup, system registration, observer wiring) and `main()` (.env loading). Submodules: `auth` (platform API calls), `bullet` (shooting, movement, collision), `combat` (triangle tip-vs-body detection, respawn), `render` (mesh spawning, transform sync), `scoreboard` (centered Chinese UI).
+
+### Client (`client/`)
+
+Binary crate — the game client. Entry point is `src/main.rs`, with `run()` (app setup, state-based system gating) and `main()`. Submodules: `login` (two-step username/password UI, renet connection), `render` (mesh spawning with `LocalPlayer` marker), `scoreboard` (top-right simple text).
 
 **Authentication flow**:
 1. Client starts in `GameState::Login` — shows bevy_ui login screen (two-step: username, then password)
@@ -47,7 +57,7 @@ Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared libra
 
 **Networking model**: Server-authoritative via `bevy_replicon`. Components marked `Replicated` (spawned server-side) auto-sync to all clients. Client sends `MoveInput` messages (not replicated — uses `add_client_message`). `Position` and `Direction` are server-authoritative and replicated back.
 
-**Key components** (all in `shared.rs`):
+**Key components** (all in `shared/src/lib.rs`):
 - `Position` (x, y) — replicated, server-authoritative
 - `Direction` (angle) — replicated, server-authoritative, rotation around Z
 - `PlayerId(u64)` — replicated, set from client entity bits
@@ -70,15 +80,19 @@ Two binaries (`src/bin/server.rs`, `src/bin/client.rs`) backed by a shared libra
 
 **Rendering**: Uses `Triangle2d` mesh (not sprites). Each player entity gets `Mesh2d` + `ColorMaterial`. `MeshMaterial2d` requires `bevy` 0.18's color material system.
 
-### Finance Example (`examples/finance.rs`)
+### Lab (`lab/`)
+
+Library crate hosting standalone examples and demos. Not depended on by any other crate — exists purely to run examples via `cargo run -p lab --example`.
+
+### Finance Example (`lab/examples/finance.rs`)
 
 A separate binary: Bevy ECS-based trading engine with axum REST API + sled persistence. Order matching runs as a Bevy system. REST endpoints: `GET /trades`, `GET /accounts`, `GET /orders`, `POST /orders`. HTTP test file at `rest/test.rest`.
 
 ### Other Examples
 
-- `examples/single.rs` — same multiplayer game but everything in one file (no `src/` modules)
-- `examples/simple_finance.rs` — ECS finance demo without networking/persistence
-- `examples/server.rs` / `examples/client.rs` — minimal UDP socket tests
+- `lab/examples/single.rs` — same multiplayer game but everything in one file (no modules)
+- `lab/examples/simple_finance.rs` — ECS finance demo without networking/persistence
+- `lab/examples/server.rs` / `lab/examples/client.rs` — minimal UDP socket tests
 
 ## Key Dependencies
 
