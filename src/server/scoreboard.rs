@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::shared::{PlayerId, Score, PlayerColor};
+use crate::shared::{PlayerId, Score, PlayerColor, PlayerName};
 
 #[derive(Component)]
 pub struct ScoreboardRoot;
@@ -25,7 +25,7 @@ pub fn update_scoreboard(
     mut commands: Commands,
     scoreboard: Query<Entity, With<ScoreboardRoot>>,
     mut prev_entries: Local<Vec<Entity>>,
-    players: Query<(&PlayerId, &Score, &PlayerColor)>,
+    players: Query<(&PlayerId, &Score, &PlayerColor, &PlayerName)>,
     asset_server: Res<AssetServer>,
     mut font_handle: Local<Option<Handle<Font>>>,
 ) {
@@ -68,15 +68,14 @@ pub fn update_scoreboard(
         commands.entity(entry).set_parent_in_place(root);
         prev_entries.push(entry);
     } else {
-        for (rank, (player_id, score, color)) in player_data.iter().enumerate() {
-            let short_id = player_id.0 % 1000;
+        for (rank, (_player_id, score, color, name)) in player_data.iter().enumerate() {
             let rank_str = match rank {
                 0 => "\u{1f947}".to_string(),
                 1 => "\u{1f948}".to_string(),
                 2 => "\u{1f949}".to_string(),
                 n => format!("#{}", n + 1),
             };
-            let text_str = format!("{rank_str}  P{short_id}  —  {}分", score.0);
+            let text_str = format!("{rank_str}  {}  —  {}分", name.0, score.0);
             let entry = commands
                 .spawn((
                     Text::new(text_str),

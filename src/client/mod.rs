@@ -1,19 +1,13 @@
 use crate::shared::*;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use bevy_replicon_renet::{
-    RenetChannelsExt, RenetClient,
-    netcode::{ClientAuthentication, NetcodeClientTransport},
-    renet::ConnectionConfig,
-};
-use std::{
-    net::{Ipv4Addr, SocketAddr, UdpSocket},
-    time::SystemTime,
-};
+use bevy_replicon_renet::RenetClient;
 
+mod login;
 mod render;
 mod scoreboard;
 
+use login::{GameState, LoginData, cleanup_login, handle_connect, handle_login_input, render_login_text, setup_login_screen};
 use render::{spawn_render, apply_position, update_visibility};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
@@ -27,40 +21,6 @@ pub(crate) struct ConnectionState {
 
 #[derive(Resource)]
 pub struct LocalClientId(pub u64);
-
-pub fn start_client(world: &mut World) {
-    let channels = world.resource::<RepliconChannels>();
-    let client = RenetClient::new(ConnectionConfig {
-        server_channels_config: channels.server_configs(),
-        client_channels_config: channels.client_configs(),
-        ..default()
-    });
-
-    let server_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), PORT);
-    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap();
-
-    let client_id = now.subsec_nanos() as u64 + now.as_secs() * 1_000_000_000;
-    let transport = NetcodeClientTransport::new(
-        now,
-        ClientAuthentication::Unsecure {
-            client_id,
-            protocol_id: PROTOCOL_ID,
-            server_addr,
-            user_data: None,
-        },
-        socket,
-    )
-    .unwrap();
-
-    world.insert_resource(client);
-    world.insert_resource(transport);
-    world.insert_resource(ConnectionState::default());
-    world.insert_resource(ConnectTimer(Timer::from_seconds(5.0, TimerMode::Once)));
-    world.insert_resource(LocalClientId(client_id));
-}
 
 pub fn client_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -102,14 +62,32 @@ pub fn check_connection(
     mut timer: ResMut<ConnectTimer>,
     client: Res<RenetClient>,
     mut state: ResMut<ConnectionState>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut login_data: ResMut<LoginData>,
+    mut commands: Commands,
 ) {
     timer.0.tick(time.delta());
     if client.is_connected() && !state.printed_connected {
-        info!("✅ 已连接服务器");
+        info!("已连接服务器");
         state.printed_connected = true;
     }
-    if timer.0.is_finished() && !client.is_connected() {
-        panic!("❌ 连接超时");
+    let should_disconnect = (timer.0.is_finished() && !client.is_connected())
+        || (state.printed_connected && !client.is_connected());
+    if should_disconnect {
+        if state.printed_connected {
+            error!("与服务器断开(认证失败或服务器关闭)");
+            login_data.status = Some("Disconnected (auth failed or server closed)".into());
+        } else {
+            error!("连接超时");
+            login_data.status = Some("Connection timed out".into());
+        }
+        login_data.connect_requested = false;
+        commands.remove_resource::<RenetClient>();
+        commands.remove_resource::<bevy_replicon_renet::netcode::NetcodeClientTransport>();
+        commands.remove_resource::<ConnectionState>();
+        commands.remove_resource::<ConnectTimer>();
+        commands.remove_resource::<LocalClientId>();
+        next_state.set(GameState::Login);
     }
 }
 
@@ -136,15 +114,27 @@ pub fn run() {
     app.replicate::<PlayerColor>();
     app.replicate::<Score>();
     app.replicate::<Dead>();
+    app.replicate::<PlayerName>();
 
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
 
-    app.add_systems(Startup, (setup_camera, start_client, setup_scoreboard));
+    app.init_state::<GameState>();
+    app.init_resource::<LoginData>();
+
+    app.add_systems(Startup, (setup_camera, setup_scoreboard));
+    app.add_systems(OnEnter(GameState::Login), setup_login_screen);
+    app.add_systems(OnExit(GameState::Login), cleanup_login);
     app.add_systems(
         Update,
-        (client_send_input, check_connection, spawn_render, apply_position, update_visibility, update_scoreboard),
+        (handle_login_input, render_login_text, handle_connect).run_if(in_state(GameState::Login)),
     );
+    app.add_systems(
+        Update,
+        (client_send_input, check_connection, spawn_render, apply_position, update_visibility, update_scoreboard)
+            .run_if(in_state(GameState::InGame)),
+    );
+
     info!("=== 客户端启动 ===");
 
     app.run();

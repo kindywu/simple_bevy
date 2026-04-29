@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::shared::{PlayerId, Score, PlayerColor};
+use crate::shared::{PlayerId, Score, PlayerColor, PlayerName};
 
 #[derive(Component)]
 pub struct ScoreboardRoot;
@@ -27,7 +27,7 @@ pub fn update_scoreboard(
     mut commands: Commands,
     scoreboard: Query<Entity, With<ScoreboardRoot>>,
     mut prev_entries: Local<Vec<Entity>>,
-    players: Query<(&PlayerId, &Score, &PlayerColor)>,
+    players: Query<(&PlayerId, &Score, &PlayerColor, &PlayerName)>,
 ) {
     let Ok(root) = scoreboard.single() else {
         return;
@@ -45,9 +45,8 @@ pub fn update_scoreboard(
     if player_data.is_empty() {
         text.push_str("\nWaiting...");
     } else {
-        for (player_id, score, _color) in &player_data {
-            let short_id = player_id.0 % 1000;
-            text.push_str(&format!("\nP{short_id}: {}", score.0));
+        for (_player_id, score, _color, name) in &player_data {
+            text.push_str(&format!("\n{}: {}", name.0, score.0));
         }
     }
 

@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 pub const PORT: u16 = 5000;
 pub const PROTOCOL_ID: u64 = 123456;
+pub const PLATFORM_PORT: u16 = 3001;
+pub const PLATFORM_API_KEY: &str = "super-secret-platform-api-key";
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Position {
@@ -39,3 +41,19 @@ pub struct Dead;
 
 #[derive(Resource, Default)]
 pub struct PlayerCount(pub u32);
+
+#[derive(Component, Clone, Serialize, Deserialize)]
+pub struct PlayerName(pub String);
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct AuthCredentials {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct AuthResponse {
+    pub success: bool,
+    pub username: String,
+    pub message: String,
+}

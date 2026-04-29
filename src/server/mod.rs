@@ -2,6 +2,7 @@ use crate::shared::*;
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use bevy_replicon::shared::backend::connected_client::NetworkId;
 use bevy_replicon_renet::{
     RenetChannelsExt, RenetServer,
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
@@ -12,10 +13,12 @@ use std::{
     time::SystemTime,
 };
 
+mod auth;
 mod combat;
 mod render;
 mod scoreboard;
 
+use auth::ApiKey;
 use combat::{combat_detection, respawn_dead_players};
 use render::{apply_position, setup_camera, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
@@ -85,9 +88,45 @@ pub fn server_on_connect(
     trigger: On<Add, ConnectedClient>,
     mut commands: Commands,
     mut count: ResMut<PlayerCount>,
+    transport: Res<NetcodeServerTransport>,
+    api_key: Res<ApiKey>,
+    clients: Query<&NetworkId>,
+    mut server: ResMut<RenetServer>,
 ) {
     let client_entity = trigger.event_target();
     let id_num = client_entity.to_bits();
+
+    let validated_name = if let Ok(network_id) = clients.get(client_entity) {
+        let client_id = network_id.get();
+        if let Some(user_data) = transport.user_data(client_id) {
+            let len = user_data.iter().position(|&b| b == 0).unwrap_or(256);
+            match serde_json::from_slice::<AuthCredentials>(&user_data[..len]) {
+                Ok(creds) => match auth::validate_credentials(&api_key.0, &creds) {
+                    Ok(username) => {
+                        info!("玩家认证成功: {}", username);
+                        Some(username)
+                    }
+                    Err(msg) => {
+                        error!("认证失败: {} - {}", creds.username, msg);
+                        server.disconnect(client_id);
+                        return;
+                    }
+                },
+                Err(_) => {
+                    info!("玩家连接(无认证信息) ID: {}", id_num);
+                    None
+                }
+            }
+        } else {
+            info!("玩家连接(无认证信息) ID: {}", id_num);
+            None
+        }
+    } else {
+        info!("玩家连接(无认证信息) ID: {}", id_num);
+        None
+    };
+
+    let name = validated_name.unwrap_or_else(|| format!("Player_{}", id_num));
 
     let hue = (count.0 as f32 * 137.508) % 360.0;
     count.0 += 1;
@@ -96,6 +135,7 @@ pub fn server_on_connect(
     commands.spawn((
         Replicated,
         PlayerId(id_num),
+        PlayerName(name),
         Position { x: 0.0, y: 0.0 },
         Direction::default(),
         PlayerColor { r, g, b },
@@ -158,7 +198,7 @@ pub fn update_visibility(
     }
 }
 
-pub fn run() {
+pub fn run(api_key: &str) {
     let mut app = App::new();
 
     app.add_plugins(
@@ -184,9 +224,11 @@ pub fn run() {
     app.replicate::<PlayerColor>();
     app.replicate::<Score>();
     app.replicate::<Dead>();
+    app.replicate::<PlayerName>();
 
     app.add_client_message::<MoveInput>(Channel::Ordered);
     app.init_resource::<PlayerCount>();
+    app.insert_resource(ApiKey(api_key.to_string()));
 
     app.add_observer(server_on_connect);
     app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard));

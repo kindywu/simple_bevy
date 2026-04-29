@@ -1,0 +1,20 @@
+{
+  "players": [
+    {
+      "username": "kindy",
+      "password_hash": "2a6dfcfc82c2e018f7fd5c5392e5972b56bb753a8b11eb69c13e9a1a684c9cd2"
+    },
+    {
+      "username": "ananda",
+      "password_hash": "859b2d9b3d956e3ea2907169e53421750110a3319ecb5d1f363de0da310697ff"
+    },
+    {
+      "username": "martin",
+      "password_hash": "b6f8d434a847fb0f0c1a8d9b936b8ca952e224f205a55f4ba9b2c20f88fdc9e7"
+    },
+    {
+      "username": "amy",
+      "password_hash": "1906bc7c801f03c41551b06e2fd406e8f471787c51357e8731ec61dd599f04c8"
+    }
+  ]
+}
