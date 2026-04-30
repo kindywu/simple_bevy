@@ -9,7 +9,7 @@
 ```mermaid
 graph TD
     subgraph Platform["platform — 认证服务"]
-        P_AUTH["main.rs — Axum HTTP API"]
+        P_AUTH["main.rs — Axum HTTPS API (TLS)"]
     end
 
     subgraph Shared["shared — 共享类型"]
@@ -36,7 +36,7 @@ graph TD
         LAB_EXAMPLES["finance / single / simple_finance"]
     end
 
-    Platform --> Server
+    Platform -->|"HTTPS"| Server
     Shared --> Server
     Shared --> Client
     Shared --> Platform
@@ -50,15 +50,15 @@ sequenceDiagram
     participant S as Server (5000)
     participant C as Client
 
-    Note over S: 启动时验证 API Key
-    S->>P: POST /api/auth/verify-key<br/>Authorization: Bearer <key>
+    Note over S: 启动时验证 API Key (HTTPS)
+    S->>P: POST /api/auth/verify-key<br/>Authorization: Bearer <key> (TLS)
     P-->>S: { valid: true/false }
 
     Note over C: GameState::Login
     C->>C: 输入用户名 → 密码
 
     C->>S: renet 连接<br/>user_data = AuthCredentials JSON
-    S->>P: POST /api/auth/login<br/>Authorization: Bearer <key>
+    S->>P: POST /api/auth/login<br/>Authorization: Bearer <key> (TLS)
     P-->>S: { success, username }
     alt 认证成功
         S->>S: spawn 玩家实体 (PlayerName)
@@ -129,7 +129,8 @@ sequenceDiagram
 |------|-----|------|
 | `PORT` | 5000 | 游戏服务器 UDP 端口 |
 | `PROTOCOL_ID` | 123456 | Netcode 协议标识 |
-| `PLATFORM_PORT` | 3001 | 平台 HTTP 端口 |
+| `PLATFORM_HOST` | 127.0.0.1 | 平台 HTTPS 服务地址 |
+| `PLATFORM_PORT` | 3001 | 平台 HTTPS 端口 |
 | `PLATFORM_API_KEY` | — | 默认 API Key |
 | `MOVE_SPEED` | 300.0 | 玩家移动速度（像素/秒） |
 | `MAX_HP` | 3 | 最大生命值 |
@@ -171,6 +172,8 @@ spawn_render → tick_cooldowns → server_handle_input → server_handle_shoot
 
 ### server/src/auth.rs — 平台认证
 
+- `tls_agent()` — 全局复用的 ureq Agent，配置自定义 rustls TLS（信任 mkcert CA + 系统根证书），用于 HTTPS 调用平台 API
+- `mkcert_ca_path()` — 跨平台查找 mkcert 本地 CA 证书路径（Windows/Mac/Linux）
 - `verify_api_key_with_retry(api_key, max_retries)` — 启动时验证 Platform API Key，失败则重试（间隔 1 秒）
 - `validate_credentials(api_key, creds)` — 调用 `POST /api/auth/login` 验证玩家凭据
 - `ApiKey` 资源 — 存储 API Key
@@ -280,12 +283,12 @@ sequenceDiagram
     participant P as 平台
 
     Note over S: start_server<br/>UDP:5000 + 验证平台 API Key
-    S->>P: POST /api/auth/verify-key
+    S->>P: POST /api/auth/verify-key (TLS)
     P-->>S: OK
 
     C->>C: 登录 UI (用户名 → 密码)
     C->>S: renet 连接 + user_data[256]
-    S->>P: POST /api/auth/login
+    S->>P: POST /api/auth/login (TLS)
     P-->>S: { username }
     S->>S: spawn 玩家实体 (Replicated)
 

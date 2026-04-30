@@ -34,7 +34,7 @@ There are no tests in this project.
 
 ### Platform (`platform/`)
 
-Independent crate — axum HTTP server on `127.0.0.1:3001`. Stores player credentials in `players.json` (SHA-256 hashed passwords) and valid server API keys in `api_keys.json`. The game server calls `POST /api/auth` with an `Authorization: Bearer <key>` header to validate players before spawning them. Default users: kindy, ananda, martin, amy (password = username).
+Independent crate — axum HTTPS server on `127.0.0.1:3001` using `axum-server` with rustls TLS (mkcert certificates). Stores player credentials in `players.json` (SHA-256 hashed passwords) and valid server API keys in `api_keys.json`. The game server calls `POST /api/auth` over HTTPS with an `Authorization: Bearer <key>` header to validate players before spawning them. Default users: kindy, ananda, martin, amy (password = username).
 
 ### Shared (`shared/`)
 
@@ -42,7 +42,7 @@ Library crate with all shared ECS components, messages, resources, and constants
 
 ### Server (`server/`)
 
-Binary crate — the game server. Entry point is `src/main.rs`, which contains the `run()` function (app setup, system registration, observer wiring) and `main()` (.env loading). Submodules: `auth` (platform API calls), `bullet` (shooting, movement, collision), `combat` (triangle tip-vs-body detection, respawn), `render` (mesh spawning, transform sync), `scoreboard` (centered Chinese UI).
+Binary crate — the game server. Entry point is `src/main.rs`, which contains the `run()` function (app setup, system registration, observer wiring) and `main()` (.env loading). Submodules: `auth` (platform API calls over HTTPS with custom rustls TLS agent), `bullet` (shooting, movement, collision), `combat` (triangle tip-vs-body detection, respawn), `render` (mesh spawning, transform sync), `scoreboard` (centered Chinese UI).
 
 ### Client (`client/`)
 
@@ -51,7 +51,7 @@ Binary crate — the game client. Entry point is `src/main.rs`, with `run()` (ap
 **Authentication flow**:
 1. Client starts in `GameState::Login` — shows bevy_ui login screen (two-step: username, then password)
 2. User submits → client creates renet connection with credentials serialized into `ClientAuthentication::Unsecure.user_data` (256-byte field)
-3. Server's `server_on_connect` extracts credentials via `NetcodeServerTransport::user_data()`, calls platform `/api/auth` to validate
+3. Server's `server_on_connect` extracts credentials via `NetcodeServerTransport::user_data()`, calls platform `/api/auth` over HTTPS to validate
 4. On success: spawns player entity with `PlayerName`; on failure: calls `server.disconnect()` to reject client
 5. Server reads `PLATFORM_API_KEY` from `.env` file at project root
 
@@ -63,6 +63,7 @@ Binary crate — the game client. Entry point is `src/main.rs`, with `run()` (ap
 - `PlayerId(u64)` — replicated, set from client entity bits
 - `PlayerName(String)` — replicated, set from platform validation
 - `PlayerColor` (r, g, b) — replicated, derived from `PlayerCount` via golden angle
+- `PLATFORM_HOST` / `PLATFORM_PORT` — platform connection constants
 - `MoveInput` (dx, dy) — message type, client→server
 - `LocalSprite` / `LocalPlayer` — marker components, client-side only
 - `AuthCredentials` / `AuthResponse` — auth serialization types, shared between server and platform
@@ -73,7 +74,7 @@ Binary crate — the game client. Entry point is `src/main.rs`, with `run()` (ap
 - `server_handle_input` — reads `MoveInput` messages, updates Position and Direction
 - `client_send_input` — reads keyboard, normalizes input, sends `MoveInput`, updates local Direction
 - `check_connection` — 5-second timeout or server disconnect → transitions back to `GameState::Login`
-- `server_on_connect` — validates credentials via platform API, spawns player on success
+- `server_on_connect` — validates credentials via platform API over HTTPS (custom rustls TLS agent trusting mkcert CA), spawns player on success
 - Login UI systems (`handle_login_input`, `render_login_text`, `handle_connect`) — only run in `GameState::Login`
 
 **Direction/rotation logic**: Angle is set to `atan2(dy, dx) - FRAC_PI_2` so the triangle's tip points in the movement direction. On the client, local Direction is updated immediately for responsive feel; on the server, Direction is only updated when input is non-zero.
@@ -101,11 +102,11 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 | `bevy` 0.18                          | Game engine (all examples)                         |
 | `bevy_replicon`                      | Network replication (core game, single example)    |
 | `bevy_replicon_renet` / `bevy_renet` | renet transport layer                              |
-| `axum` + `tokio`                     | REST API (platform, finance example)               |
+| `axum` + `axum-server` + `tokio`    | HTTPS REST API (platform, finance example)         |
 | `sled`                               | Embedded DB for persistence (finance example only) |
 | `serde` + `bincode`                  | Serialization (all binaries)                       |
 | `serde_json`                         | JSON serialization (credentials, platform API)     |
-| `ureq`                               | HTTP client (server→platform auth calls)           |
+| `ureq` + `rustls`                    | HTTPS client with custom TLS (server→platform)     |
 | `sha2` + `hex`                       | Password hashing (platform only)                   |
 
 ## Code Patterns
@@ -114,6 +115,6 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 - **ClientId mapping**: `client_id_to_u64()` converts `ClientId::Client(entity)` to `entity.to_bits()` for matching against `PlayerId.0`. This is how server maps incoming messages to the correct player entity.
 - **Golden angle color generation**: `hue = (count * 137.508) % 360` produces well-distributed distinct hues for successive players.
 - **State-based UI**: Client uses `GameState` enum (`Login`, `InGame`) to gate systems with `run_if(in_state(...))`. Login UI is two-step: username prompt, then password prompt.
-- **Credentials in user_data**: Client serializes `AuthCredentials` as JSON into the 256-byte `user_data` field of `ClientAuthentication::Unsecure`. Server extracts it via `NetcodeServerTransport::user_data(client_id)`.
+- **Credentials in user_data**: Client serializes `AuthCredentials` as JSON into the 256-byte `user_data` field of `ClientAuthentication::Unsecure`. Server extracts it via `NetcodeServerTransport::user_data(client_id)` and validates over HTTPS using a custom rustls TLS agent.
 - **Editions**: Uses Rust edition 2024 (`Cargo.toml`).
-- **Workspace dependencies**: Shared crate versions (`bevy`, `bevy_renet`, `bevy_replicon`, `bevy_replicon_renet`, `serde`, `serde_json`, `rand`) are centralized in root `Cargo.toml` under `[workspace.dependencies]`. Member crates reference them with `workspace = true`. Platform-only deps (`axum`, `tokio`, `sha2`, `hex`) stay in platform's own `Cargo.toml`.
+- **Workspace dependencies**: Shared crate versions (`bevy`, `bevy_renet`, `bevy_replicon`, `bevy_replicon_renet`, `serde`, `serde_json`, `rand`) are centralized in root `Cargo.toml` under `[workspace.dependencies]`. Member crates reference them with `workspace = true`. Platform-only deps (`axum`, `axum-server`, `tokio`, `sha2`, `hex`) stay in platform's own `Cargo.toml`. Server-only deps (`ureq`, `rustls`, `rustls-pemfile`, `rustls-native-certs`) stay in server's `Cargo.toml`.

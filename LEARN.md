@@ -7,7 +7,7 @@
 ```mermaid
 graph TB
     subgraph Platform["platform/ — 认证服务"]
-        P_MAIN["main.rs — axum HTTP 服务，玩家登录/API Key 验证"]
+        P_MAIN["main.rs — axum HTTPS 服务 (TLS)，玩家登录/API Key 验证"]
     end
 
     subgraph Shared["shared/ — 共享类型"]
@@ -16,7 +16,7 @@ graph TB
 
     subgraph Server["server/ — 服务端"]
         S_MAIN["main.rs — 入口 · 网络 · 认证 · 移动 · 裁剪 · 可见性"]
-        S_AUTH["auth.rs — 平台 API 调用 · 凭证验证"]
+        S_AUTH["auth.rs — 平台 HTTPS API 调用 · TLS Agent · 凭证验证"]
         S_BULLET["bullet.rs — 射击 · 子弹移动 · 碰撞 · 生命周期"]
         S_COMBAT["combat.rs — 三角形碰撞检测 · 安全重生"]
         S_RENDER["render.rs — 相机 · 网格创建 · Transform 同步"]
@@ -46,9 +46,9 @@ graph TB
 | 文件 | 行数 | 角色 |
 |------|------|------|
 | `shared/src/lib.rs` | 84 | 全部共享类型定义（组件、资源、消息、常量） |
-| `platform/src/main.rs` | 225 | 认证服务：axum HTTP，SHA-256 密码，API Key 验证 |
+| `platform/src/main.rs` | 225 | 认证服务：axum HTTPS (TLS)，SHA-256 密码，API Key 验证 |
 | `server/src/main.rs` | 326 | 服务端入口：网络启动、玩家认证、移动、裁剪、可见性 |
-| `server/src/auth.rs` | 82 | 平台 API 调用：Key 验证、凭证验证（ureq） |
+| `server/src/auth.rs` | 82 | 平台 HTTPS API 调用：Key 验证、凭证验证 (ureq + rustls TLS) |
 | `server/src/bullet.rs` | 183 | 射击系统：冷却、发射、移动、碰撞、生命周期 |
 | `server/src/combat.rs` | 178 | 战斗检测（三角形碰撞）、安全重生点计算 |
 | `server/src/render.rs` | 76 | 服务端渲染：相机、网格、子弹渲染、Transform 同步 |
@@ -68,7 +68,14 @@ graph TB
 ## 第 1 级：先把游戏跑起来
 
 ```bash
-# 终端 1 — 启动认证服务
+# 0. 首次需要安装 mkcert 并生成 TLS 证书
+winget install FiloSottile.mkcert    # Windows
+# brew install mkcert                 # macOS
+# apt install mkcert                  # Linux
+mkcert -install
+cd platform/certs && mkcert localhost 127.0.0.1 ::1 && cd ../..
+
+# 终端 1 — 启动认证服务 (HTTPS://127.0.0.1:3001)
 cargo run -p platform
 
 # 终端 2 — 启动服务端（带窗口）
@@ -183,11 +190,13 @@ cargo run -p client
 | 知识点 | 在项目中的使用 |
 |--------|---------------|
 | axum HTTP 框架 | `Router`, `State`, `Json`, `HeaderMap`, `StatusCode` |
-| tokio 异步运行时 | `#[tokio::main]`, `TcpListener`, `axum::serve` |
+| axum-server (HTTPS) | `axum_server::bind_rustls` + `RustlsConfig`（mkcert TLS 证书） |
+| tokio 异步运行时 | `#[tokio::main]` |
 | SHA-256 密码哈希 | `sha2::Sha256` + `hex::encode` |
 | `serde_json` | JSON 序列化/反序列化 |
 | `Arc<Mutex<T>>` | 线程安全的共享状态 |
-| ureq HTTP 客户端 | 服务端→平台 API 的同步 HTTP 调用 |
+| rustls (TLS) | 自定义 `ClientConfig` + 根证书存储（服务端→平台 HTTPS 调用） |
+| `OnceLock<T>` | 全局单例 TLS Agent 延迟初始化 |
 | RESTful API 设计 | `POST /api/auth/verify-key`, `POST /api/auth/login`, `GET /api/health` |
 
 ### 2.7 游戏编程概念
@@ -565,9 +574,9 @@ Platform 是一个独立的 axum HTTP 服务，运行在 `127.0.0.1:3001`。
 
 **认证流程**：
 1. 服务端启动时从 `.env` 文件（或环境变量）读取 `PLATFORM_API_KEY`
-2. 服务端用此 Key 调用 `/api/auth/verify-key` 验证（带重试 3 次）
+2. 服务端用此 Key 通过 HTTPS 调用 `/api/auth/verify-key` 验证（带重试 3 次，使用自定义 rustls TLS Agent）
 3. 玩家连接时，客户端将用户名和密码序列化为 JSON 放入 `user_data`（256 字节）
-4. 服务端提取 `user_data` → 反序列化 → 调用 `/api/auth/login` 验证
+4. 服务端提取 `user_data` → 反序列化 → 通过 HTTPS 调用 `/api/auth/login` 验证
 5. 认证成功 → spawn 玩家（带 `PlayerName`）；失败 → `server.disconnect(client_id)`
 
 **密码存储**：SHA-256 哈希，存于 `players.json`。默认用户：kindy, ananda, martin, amy（密码同用户名）。
@@ -672,12 +681,12 @@ graph TD
     end
 
     subgraph platform["platform/src/main.rs"]
-        P_AUTH["认证 API (axum): SHA-256 密码哈希, API Key 验证, 玩家登录"]
+        P_AUTH["认证 API (axum + TLS): SHA-256 密码哈希, API Key 验证, 玩家登录"]
     end
 
     subgraph server["server/"]
         S_MAIN["main.rs: 网络启动, 玩家认证, 移动, 裁剪, 可见性"]
-        S_AUTH["auth.rs: 平台 API 调用 (ureq)"]
+        S_AUTH["auth.rs: 平台 HTTPS API 调用 (ureq + rustls)"]
         S_BULLET["bullet.rs: 射击冷却, 发射, 移动, 碰撞, 生命周期"]
         S_COMBAT["combat.rs: 三角形碰撞, 安全重生"]
         S_RENDER["render.rs: 相机, 网格, Transform 同步"]
@@ -693,7 +702,7 @@ graph TD
 
     shared --> server
     shared --> client
-    platform -.->|"HTTP (ureq)"| server
+    platform -.->|"HTTPS (ureq + rustls TLS)"| server
 ```
 
 ---
@@ -709,9 +718,10 @@ pub const PORT: u16 = 5000;
 pub const PROTOCOL_ID: u64 = 123456;
 pub const PLATFORM_PORT: u16 = 3001;
 pub const PLATFORM_API_KEY: &str = "super-secret-platform-api-key";
+pub const PLATFORM_HOST: &str = "127.0.0.1";
 ```
 
-`PROTOCOL_ID` 是 netcode 协议的版本标识——服务端和客户端必须一致，否则连接被拒绝。`PLATFORM_API_KEY` 是默认的 API Key（当没有 `.env` 文件时使用）。
+`PROTOCOL_ID` 是 netcode 协议的版本标识——服务端和客户端必须一致，否则连接被拒绝。`PLATFORM_API_KEY` 是默认的 API Key（当没有 `.env` 文件时使用）。`PLATFORM_HOST` 是平台 HTTPS 服务地址，服务端用它与 `PLATFORM_PORT` 拼接完整的 HTTPS URL。
 
 ### 6.2 核心组件
 
@@ -767,7 +777,7 @@ pub const BULLET_LIFETIME_SECS: f32 = 2.0;
 
 ## 第 7 级：Platform 认证服务 (`platform/src/main.rs`)
 
-> 📚 知识点：axum Router/State/Json/HeaderMap, tokio, SHA-256 哈希, `Arc<Mutex<>>`
+> 📚 知识点：axum Router/State/Json/HeaderMap, axum-server TLS, rustls, tokio, SHA-256 哈希, `Arc<Mutex<>>`
 
 ### 7.1 数据结构
 
@@ -808,9 +818,9 @@ fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
 
 ### 7.4 API 端点
 
-**`POST /api/auth/verify-key`** — 验证 API Key 是否有效。服务端启动时调用。
+**`POST /api/auth/verify-key`** — 验证 API Key 是否有效。服务端启动时通过 HTTPS 调用。
 
-**`POST /api/auth/login`** — 验证玩家凭据。接收 `LoginRequest { username, password }`，哈希密码后与数据库比对，返回 `LoginResponse { success, username, message }`。
+**`POST /api/auth/login`** — 验证玩家凭据。接收 `LoginRequest { username, password }`，哈希密码后与数据库比对，返回 `LoginResponse { success, username, message }`。通过 HTTPS 调用。
 
 **`GET /api/health`** — 健康检查，返回 `{"status": "ok"}`。
 
@@ -825,12 +835,24 @@ async fn main() {
         .route("/api/auth/login", post(login_handler))
         .route("/api/health", get(health_handler))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3001").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+
+    // 加载 mkcert 生成的 TLS 证书
+    let tls_config = RustlsConfig::from_pem_file(
+        format!("{MANIFEST_DIR}/certs/localhost.pem"),
+        format!("{MANIFEST_DIR}/certs/localhost-key.pem"),
+    ).await.expect("Failed to load TLS certificates");
+
+    let addr = "127.0.0.1:3001".parse().unwrap();
+    println!("Platform listening on https://127.0.0.1:3001");
+
+    axum_server::bind_rustls(addr, tls_config)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
 ```
 
-> 📚 知识点：`#[tokio::main]` — 将 `async fn main()` 转换为同步入口，内部创建 tokio 异步运行时。`axum::serve` 启动 HTTP 服务器。
+> 📚 知识点：`#[tokio::main]` — 将 `async fn main()` 转换为同步入口，内部创建 tokio 异步运行时。`axum_server::bind_rustls` 绑定带 TLS 的 HTTPS 服务器，使用 rustls 作为 TLS 后端。证书由 mkcert 生成（`mkcert localhost 127.0.0.1 ::1`），存储在 `platform/certs/` 目录。
 
 ---
 
@@ -846,7 +868,7 @@ use bevy_replicon::shared::backend::connected_client::NetworkId;
 
 > 📚 知识点：`NetworkId` — bevy_replicon 0.39 的新 API，替代直接用 `Entity::to_bits()` 作为客户端标识。
 
-子模块：`auth`, `bullet`, `combat`, `render`, `scoreboard`。注意 `combat` 是 `pub(crate)` 的——因为 `bullet.rs` 需要引用其中的 `triangle_vertices` 和 `point_in_triangle` 函数。
+子模块：`auth` (HTTPS 平台调用), `bullet`, `combat`, `render`, `scoreboard`。注意 `combat` 是 `pub(crate)` 的——因为 `bullet.rs` 需要引用其中的 `triangle_vertices` 和 `point_in_triangle` 函数。`auth` 模块使用 `rustls` + `ureq` 进行 HTTPS 通信。
 
 #### 8.1.2 服务端专属常量
 
@@ -1021,18 +1043,37 @@ pub fn run(api_key: &str) {
 
 ### 8.2 `server/src/auth.rs` — 平台 API 调用
 
-> 📚 知识点：ureq HTTP 客户端、同步 HTTP 请求、重试逻辑
+> 📚 知识点：ureq HTTPS 客户端、rustls 自定义 TLS 配置、mkcert CA 证书加载、OnceLock 全局单例
 
 ```rust
 pub fn verify_api_key_with_retry(api_key: &str, max_retries: u32) -> Result<(), String>
 pub fn validate_credentials(api_key: &str, creds: &AuthCredentials) -> Result<String, String>
+
+/// 构建信任 mkcert CA 的 ureq Agent（延迟初始化，全局复用）
+fn tls_agent() -> &'static ureq::Agent
+/// 跨平台查找 mkcert 根 CA 证书路径
+fn mkcert_ca_path() -> Option<PathBuf>
 ```
+
+**tls_agent**：全局复用的 ureq HTTPS Agent。使用 `OnceLock` 延迟初始化：
+
+1. 加载系统原生根证书（`rustls_native_certs::load_native_certs()`）——信任 Let's Encrypt 等公共 CA
+2. 加载 mkcert 本地 CA 证书（`mkcert_ca_path()` 跨平台查找 `rootCA.pem`）
+3. 构建 rustls `ClientConfig`，配置到 `ureq::AgentBuilder`
+
+> 📚 知识点：`OnceLock<ureq::Agent>` — 线程安全的延迟初始化容器。`get_or_init(|| ...)` 只在第一次调用时执行闭包，后续调用返回缓存的引用。适合全局复用 TLS 配置（避免每次请求重新握手）。
+
+**mkcert_ca_path**：按优先级查找 mkcert 根 CA：
+1. 环境变量 `MKCERT_CA`
+2. Windows: `%LOCALAPPDATA%/mkcert/rootCA.pem`
+3. Linux: `$HOME/.local/share/mkcert/rootCA.pem`
+4. macOS: `$HOME/Library/Application Support/mkcert/rootCA.pem`
 
 **verify_api_key_with_retry**：启动时调用，带重试（最多 3 次，间隔 1 秒）。平台未启动时这给了一些容忍度。
 
-**validate_credentials**：每个玩家连接时调用。发 POST 到 `/api/auth/login`，携带 JSON body 和 `Authorization: Bearer <key>` 头。成功返回 username。
+**validate_credentials**：每个玩家连接时调用。通过 `tls_agent()` 发 HTTPS POST 到 `/api/auth/login`，携带 JSON body 和 `Authorization: Bearer <key>` 头。成功返回 username。
 
-> 📚 知识点：`ureq::post(url).set("Authorization", &auth_header).send_string(&body)` — 同步 HTTP POST 请求。注意这里是 `send_string()` 而不是 `send_json()`，因为需要自定义 Content-Type 头。
+> 📚 知识点：`tls_agent().post(url).set(...).send_string(&body)` — 通过自定义 TLS Agent 的 HTTPS POST 请求。URL 从 `http://` 改为 `https://`。`send_string()` 而不是 `send_json()`，因为需要自定义 Content-Type 头。
 
 ### 8.3 `server/src/bullet.rs` — 射击系统
 
@@ -1435,10 +1476,12 @@ transform.rotation = Quat::from_rotation_z(dir.angle);
 | `bevy_replicon_renet` 0.15 | renet 传输适配器 |
 | `bevy_renet` 4.0 | UDP 网络库（renet channels） |
 | `axum` 0.8 | HTTP 框架（platform + finance 示例） |
+| `axum-server` 0.7 | HTTPS 服务器 + rustls TLS（platform） |
 | `tokio` 1 | 异步运行时（platform + finance 示例） |
 | `serde` + `serde_json` | 序列化/反序列化 |
 | `sha2` + `hex` | SHA-256 密码哈希（platform） |
-| `ureq` 2 | 同步 HTTP 客户端（server→platform） |
+| `ureq` 2 | 同步 HTTPS 客户端（server→platform） |
+| `rustls` 0.23 | TLS 协议实现（server→platform 客户端认证） |
 | `sled` 0.34 | 嵌入式数据库（finance 示例） |
 | `rand` 0.10 | 随机数（安全重生点、行情模拟） |
 | `bincode` | 二进制序列化（finance 示例，bevy_replicon 内部也使用） |
