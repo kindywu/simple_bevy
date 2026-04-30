@@ -39,7 +39,6 @@ graph TB
         LAB_CLIENT["client.rs — UDP socket 测试"]
     end
 
-    Platform --> Shared
     Server --> Shared
     Client --> Shared
 ```
