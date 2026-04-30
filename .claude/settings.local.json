@@ -6,7 +6,8 @@
       "Bash(cargo build *)",
       "Bash(cargo run *)",
       "Read(//c/Windows/Fonts/**)",
-      "Bash(cargo doc *)"
+      "Bash(cargo doc *)",
+      "Bash(bash *)"
     ]
   }
 }

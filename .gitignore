@@ -2,3 +2,6 @@
 /platform/target
 trading.db
 .env
+/.claude
+/.superpowers
+/.worktrees
