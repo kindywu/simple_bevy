@@ -116,3 +116,4 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 - **State-based UI**: Client uses `GameState` enum (`Login`, `InGame`) to gate systems with `run_if(in_state(...))`. Login UI is two-step: username prompt, then password prompt.
 - **Credentials in user_data**: Client serializes `AuthCredentials` as JSON into the 256-byte `user_data` field of `ClientAuthentication::Unsecure`. Server extracts it via `NetcodeServerTransport::user_data(client_id)`.
 - **Editions**: Uses Rust edition 2024 (`Cargo.toml`).
+- **Workspace dependencies**: Shared crate versions (`bevy`, `bevy_renet`, `bevy_replicon`, `bevy_replicon_renet`, `serde`, `serde_json`, `rand`) are centralized in root `Cargo.toml` under `[workspace.dependencies]`. Member crates reference them with `workspace = true`. Platform-only deps (`axum`, `tokio`, `sha2`, `hex`) stay in platform's own `Cargo.toml`.
