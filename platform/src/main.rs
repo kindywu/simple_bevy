@@ -4,6 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
+use axum_server::tls_rustls::RustlsConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
@@ -215,10 +216,18 @@ async fn main() {
         .route("/api/health", get(health_handler))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
-        .await
-        .expect("Failed to bind platform port");
-    println!("Platform listening on http://127.0.0.1:3001");
+    let tls_config = RustlsConfig::from_pem_file(
+        format!("{MANIFEST_DIR}/certs/localhost.pem"),
+        format!("{MANIFEST_DIR}/certs/localhost-key.pem"),
+    )
+    .await
+    .expect("Failed to load TLS certificates (run: mkcert -install && cd platform/certs && mkcert localhost 127.0.0.1 ::1)");
 
-    axum::serve(listener, app).await.unwrap();
+    let addr = "127.0.0.1:3001".parse().unwrap();
+    println!("Platform listening on https://127.0.0.1:3001");
+
+    axum_server::bind_rustls(addr, tls_config)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }

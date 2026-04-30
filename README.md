@@ -15,7 +15,14 @@
 ## 运行
 
 ```bash
-# 1. 启动平台认证服务（先启动）
+# 0. 安装 mkcert 并生成 TLS 证书（仅首次）
+winget install FiloSottile.mkcert          # Windows
+# brew install mkcert                       # macOS
+# apt install mkcert                        # Linux
+mkcert -install
+cd platform/certs && mkcert localhost 127.0.0.1 ::1 && cd ../..
+
+# 1. 启动平台认证服务（先启动，HTTPS://127.0.0.1:3001）
 cargo run -p platform
 
 # 2. 启动服务端（读取 ../.env 中的 PLATFORM_API_KEY）
@@ -47,7 +54,7 @@ cargo run -p lab --example single -- client
 
 | Crate | 说明 |
 |-------|------|
-| `platform` | Axum HTTP 服务 (127.0.0.1:3001)，管理玩家凭据和 API Key 验证 |
+| `platform` | Axum HTTPS 服务 (127.0.0.1:3001)，管理玩家凭据和 API Key 验证。使用 mkcert 证书启用 TLS |
 | `shared` | 共享库：所有 ECS 组件、消息、资源和常量定义 |
 | `server` | 游戏服务端：移动处理、战斗检测、子弹系统、排行榜 |
 | `client` | 游戏客户端：登录 UI、键盘输入、渲染、排行榜 |
@@ -59,7 +66,7 @@ cargo run -p lab --example single -- client
 - [bevy_replicon](https://github.com/projectharmonia/bevy_replicon) — 网络复制框架
 - [bevy_replicon_renet](https://github.com/projectharmonia/bevy_replicon_renet) — renet 传输层
 - [Axum](https://github.com/tokio-rs/axum) + Tokio — 平台 HTTP API
-- ureq — 服务端→平台 HTTP 客户端
+- ureq (native-tls) — 服务端→平台 HTTPS 客户端
 - serde + bincode / serde_json — 序列化
 - rand — 安全重生点随机生成
 

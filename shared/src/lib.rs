@@ -5,6 +5,7 @@ pub const PORT: u16 = 5000;
 pub const PROTOCOL_ID: u64 = 123456;
 pub const PLATFORM_PORT: u16 = 3001;
 pub const PLATFORM_API_KEY: &str = "super-secret-platform-api-key";
+pub const PLATFORM_HOST: &str = "127.0.0.1";
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Position {
