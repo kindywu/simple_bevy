@@ -1,6 +1,7 @@
 use shared::*;
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};
 use bevy::prelude::*;
+use bevy_ui_widgets::ButtonPlugin;
 use bevy_replicon::prelude::*;
 use bevy_replicon::shared::backend::connected_client::NetworkId;
 use bevy_replicon_renet::{
@@ -271,6 +272,7 @@ pub fn run(api_key: &str) {
     app.insert_resource(ApiKey(api_key.to_string()));
     app.insert_resource(PlatformConnected(true));
 
+    app.add_plugins(ButtonPlugin);
     app.add_observer(server_on_connect);
     app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard, verify_platform_connection));
     app.add_systems(

@@ -5321,6 +5321,7 @@ dependencies = [
  "bevy_renet",
  "bevy_replicon",
  "bevy_replicon_renet",
+ "bevy_ui_widgets",
  "rand 0.10.1",
  "rustls",
  "rustls-native-certs",

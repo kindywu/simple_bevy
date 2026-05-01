@@ -1,19 +1,17 @@
 use bevy::prelude::*;
+use bevy_ui_widgets::{Button, observe};
 use shared::{PlayerColor, PlayerId, PlayerName, Score};
 
+/// 排行榜根节点 Widget 标记
 #[derive(Component)]
-pub struct ScoreboardRoot;
+pub struct ScoreboardWidget;
 
-pub fn setup_scoreboard(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let font = asset_server.load("fonts/msyh.ttc");
+/// 排行榜条目 Widget 标记
+#[derive(Component)]
+struct ScoreboardEntry;
+
+pub fn setup_scoreboard(mut commands: Commands) {
     commands.spawn((
-        Text::new(""),
-        TextFont {
-            font,
-            font_size: 20.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(10.0),
@@ -24,16 +22,15 @@ pub fn setup_scoreboard(mut commands: Commands, asset_server: Res<AssetServer>) 
             ..default()
         },
         GlobalZIndex(10),
-        ScoreboardRoot,
+        ScoreboardWidget,
     ));
 }
 
 pub fn update_scoreboard(
     mut commands: Commands,
-    scoreboard: Query<Entity, With<ScoreboardRoot>>,
+    scoreboard: Query<Entity, With<ScoreboardWidget>>,
     mut prev_entries: Local<Vec<Entity>>,
     players: Query<(&PlayerId, &Score, &PlayerColor, &PlayerName)>,
-    asset_server: Res<AssetServer>,
 ) {
     let Ok(root) = scoreboard.single() else {
         return;
@@ -47,24 +44,37 @@ pub fn update_scoreboard(
     let mut player_data: Vec<_> = players.iter().collect();
     player_data.sort_unstable_by(|a, b| b.1.0.cmp(&a.1.0));
 
-    let mut text = "=== Scores ===".to_string();
-    if player_data.is_empty() {
-        text.push_str("\nWaiting...");
+    let text = if player_data.is_empty() {
+        "=== Scores ===\nWaiting...".to_string()
     } else {
+        let mut lines = "=== Scores ===".to_string();
         for (_player_id, score, _color, name) in &player_data {
-            text.push_str(&format!("\n{}: {}", name.0, score.0));
+            lines.push_str(&format!("\n{}: {}", name.0, score.0));
         }
-    }
+        lines
+    };
 
     let entry = commands
         .spawn((
-            TextSpan(text.into()),
+            ScoreboardEntry,
+            Button,
+            Node {
+                padding: UiRect::all(Val::Px(4.0)),
+                ..default()
+            },
+            Text::new(text),
             TextFont {
-                font: asset_server.load("fonts/msyh.ttc"),
                 font_size: 18.0,
                 ..default()
             },
             TextColor(Color::WHITE),
+            TextLayout {
+                justify: Justify::Right,
+                ..default()
+            },
+            observe(|_trigger: On<Pointer<Click>>| {
+                info!("Scoreboard clicked");
+            }),
         ))
         .id();
     commands.entity(entry).set_parent_in_place(root);
