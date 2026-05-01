@@ -10,6 +10,7 @@ use bevy_replicon_renet::{
     renet::ConnectionConfig,
 };
 use std::{
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddr, UdpSocket},
     time::SystemTime,
 };
@@ -40,6 +41,13 @@ pub const MAX_SPAWN_ATTEMPTS: u32 = 50;
 
 #[derive(Component, Deref, DerefMut)]
 pub struct RespawnTimer(pub Timer);
+
+/// 记录已认证在线玩家，用于阻止同一账号多次登录。
+#[derive(Resource, Default)]
+pub struct OnlinePlayers {
+    pub by_name: HashMap<String, Entity>,   // username -> player_entity
+    pub by_client: HashMap<Entity, String>, // client_entity -> username
+}
 
 pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let h = h / 60.0;
@@ -112,6 +120,7 @@ pub fn server_on_connect(
     platform: Res<PlatformConnected>,
     clients: Query<&NetworkId>,
     mut server: ResMut<RenetServer>,
+    mut online_players: ResMut<OnlinePlayers>,
 ) {
     let client_entity = trigger.event_target();
     let mut id_num = client_entity.to_bits();
@@ -154,16 +163,27 @@ pub fn server_on_connect(
         None
     };
 
-    let name = validated_name.unwrap_or_else(|| format!("Player_{}", id_num));
+    // 阻止已认证玩家重复登录
+    if let Some(ref username) = validated_name {
+        if online_players.by_name.contains_key(username) {
+            warn!("玩家 {} 已在线，拒绝重复登录", username);
+            if let Ok(network_id) = clients.get(client_entity) {
+                server.disconnect(network_id.get());
+            }
+            return;
+        }
+    }
+
+    let name = validated_name.clone().unwrap_or_else(|| format!("Player_{}", id_num));
 
     let hue = (count.0 as f32 * 137.508) % 360.0;
     count.0 += 1;
     let (r, g, b) = hsv_to_rgb(hue, 0.8, 0.9);
 
-    commands.spawn((
+    let player_entity = commands.spawn((
         Replicated,
         PlayerId(id_num),
-        PlayerName(name),
+        PlayerName(name.clone()),
         Position { x: 0.0, y: 0.0 },
         Direction::default(),
         PlayerColor { r, g, b },
@@ -174,9 +194,30 @@ pub fn server_on_connect(
             t.tick(std::time::Duration::from_secs_f32(SHOOT_COOLDOWN_SECS));
             t
         }),
-    ));
+    )).id();
+
+    // 记录已认证玩家
+    if let Some(username) = validated_name {
+        online_players.by_name.insert(username.clone(), player_entity);
+        online_players.by_client.insert(client_entity, username);
+    }
 
     info!("玩家连接 ID: {}", id_num);
+}
+
+pub fn server_on_disconnect(
+    trigger: On<Remove, ConnectedClient>,
+    mut commands: Commands,
+    mut online_players: ResMut<OnlinePlayers>,
+) {
+    let client_entity = trigger.event_target();
+
+    if let Some(username) = online_players.by_client.remove(&client_entity) {
+        if let Some(player_entity) = online_players.by_name.remove(&username) {
+            commands.entity(player_entity).despawn();
+            info!("玩家 {} 断开连接，实体 {:?} 已清理", username, player_entity);
+        }
+    }
 }
 
 pub fn server_handle_input(
@@ -273,7 +314,9 @@ pub fn run(api_key: &str) {
     app.insert_resource(PlatformConnected(true));
 
     app.add_plugins(ButtonPlugin);
+    app.init_resource::<OnlinePlayers>();
     app.add_observer(server_on_connect);
+    app.add_observer(server_on_disconnect);
     app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard, verify_platform_connection));
     app.add_systems(
         Update,
