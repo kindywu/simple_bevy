@@ -39,7 +39,6 @@ graph TD
     Platform -->|"HTTPS"| Server
     Shared --> Server
     Shared --> Client
-    Shared --> Platform
 ```
 
 ## 认证流程
