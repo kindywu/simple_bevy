@@ -57,7 +57,7 @@ pub(crate) fn point_in_triangle(p: Point2, a: Point2, b: Point2, c: Point2) -> b
     u >= 0.0 && v >= 0.0 && (u + v) <= 1.0
 }
 
-fn find_safe_spawn(alive_positions: &[Position]) -> Position {
+pub(crate) fn find_safe_spawn(alive_positions: &[Position]) -> Position {
     let min_x = -VISIBLE_HALF_WIDTH + BOUNDARY_MARGIN;
     let max_x = VISIBLE_HALF_WIDTH - BOUNDARY_MARGIN;
     let min_y = -VISIBLE_HALF_HEIGHT + BOUNDARY_MARGIN;

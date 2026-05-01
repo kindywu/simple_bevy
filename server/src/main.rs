@@ -26,7 +26,7 @@ use bullet::{
     ShootCooldown, bullet_lifetime, bullet_player_collision, move_bullets, server_handle_shoot,
     tick_cooldowns,
 };
-use combat::{combat_detection, respawn_dead_players};
+use combat::{combat_detection, find_safe_spawn, respawn_dead_players};
 use render::{apply_bullet_position, apply_position, setup_camera, spawn_bullet_render, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
@@ -121,6 +121,7 @@ pub fn server_on_connect(
     clients: Query<&NetworkId>,
     mut server: ResMut<RenetServer>,
     mut online_players: ResMut<OnlinePlayers>,
+    alive_players: Query<&Position, Without<Dead>>,
 ) {
     let client_entity = trigger.event_target();
     let mut id_num = client_entity.to_bits();
@@ -184,7 +185,10 @@ pub fn server_on_connect(
         Replicated,
         PlayerId(id_num),
         PlayerName(name.clone()),
-        Position { x: 0.0, y: 0.0 },
+        {
+            let positions: Vec<Position> = alive_players.iter().copied().collect();
+            find_safe_spawn(&positions)
+        },
         Direction::default(),
         PlayerColor { r, g, b },
         Score::default(),
