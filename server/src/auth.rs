@@ -1,4 +1,4 @@
-use shared::{AuthCredentials, AuthResponse, PLATFORM_HOST, PLATFORM_PORT};
+use shared::{AuthCredentials, AuthResponse, PLATFORM_HOST, PLATFORM_PORT, RenewRequest, RenewResponse};
 use bevy::prelude::*;
 use rustls::{ClientConfig, RootCertStore};
 use serde::Deserialize;
@@ -122,8 +122,8 @@ fn try_verify_key(api_key: &str) -> Result<(), String> {
     }
 }
 
-/// 验证玩家登录凭据
-pub fn validate_credentials(api_key: &str, creds: &AuthCredentials) -> Result<String, String> {
+/// 验证玩家登录凭据，返回 (username, token)
+pub fn validate_credentials(api_key: &str, creds: &AuthCredentials) -> Result<(String, String), String> {
     let body = serde_json::to_string(creds).map_err(|_| "Failed to serialize credentials".to_string())?;
 
     let response = tls_agent()
@@ -138,8 +138,31 @@ pub fn validate_credentials(api_key: &str, creds: &AuthCredentials) -> Result<St
         .map_err(|e| format!("Invalid platform response: {}", e))?;
 
     if auth_response.success {
-        Ok(auth_response.username)
+        Ok((auth_response.username, auth_response.token))
     } else {
         Err(auth_response.message)
+    }
+}
+
+/// 续约 session
+pub fn renew_session(api_key: &str, token: &str) -> Result<(), String> {
+    let body = serde_json::to_string(&RenewRequest { token: token.to_string() })
+        .map_err(|_| "Failed to serialize renew request".to_string())?;
+
+    let response = tls_agent()
+        .post(&platform_url("/api/session/renew"))
+        .set("Authorization", &auth_header(api_key))
+        .set("Content-Type", "application/json")
+        .send_string(&body)
+        .map_err(|e| format!("Session renew service unavailable: {}", e))?;
+
+    let renew_response: RenewResponse = response
+        .into_json()
+        .map_err(|e| format!("Invalid platform renew response: {}", e))?;
+
+    if renew_response.success {
+        Ok(())
+    } else {
+        Err(renew_response.message)
     }
 }

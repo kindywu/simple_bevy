@@ -57,6 +57,18 @@ pub struct AuthResponse {
     pub success: bool,
     pub username: String,
     pub message: String,
+    pub token: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct RenewRequest {
+    pub token: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct RenewResponse {
+    pub success: bool,
+    pub message: String,
 }
 
 #[derive(Message, Clone, Serialize, Deserialize)]

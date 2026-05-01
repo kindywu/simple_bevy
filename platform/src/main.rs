@@ -7,7 +7,9 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct Player {
@@ -32,15 +34,27 @@ struct LoginRequest {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-struct LoginResponse {
-    success: bool,
-    username: String,
+struct KeyVerifyResponse {
+    valid: bool,
     message: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-struct KeyVerifyResponse {
-    valid: bool,
+struct AuthResponse {
+    success: bool,
+    username: String,
+    message: String,
+    token: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+struct RenewRequest {
+    token: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+struct RenewResponse {
+    success: bool,
     message: String,
 }
 
@@ -48,7 +62,16 @@ struct KeyVerifyResponse {
 struct AppState {
     players: Arc<Mutex<PlayerDb>>,
     api_keys: ApiKeyDb,
+    sessions: Arc<Mutex<HashMap<String, Session>>>, // token -> Session
 }
+
+#[derive(Clone, Debug)]
+struct Session {
+    username: String,
+    expires_at: Instant,
+}
+
+const SESSION_TTL_SECS: u64 = 60;
 
 fn hash_password(password: &str) -> String {
     let mut hasher = Sha256::new();
@@ -105,6 +128,28 @@ fn check_api_key(state: &AppState, headers: &HeaderMap) -> Result<(), (StatusCod
     Ok(())
 }
 
+fn generate_token() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut token = String::with_capacity(32);
+    for _ in 0..32 {
+        let idx = (rand::random::<u32>() as usize) % CHARSET.len();
+        token.push(CHARSET[idx] as char);
+    }
+    token
+}
+
+fn cleanup_expired_sessions(sessions: &mut HashMap<String, Session>) {
+    let now = Instant::now();
+    let expired: Vec<String> = sessions
+        .iter()
+        .filter(|(_, s)| s.expires_at <= now)
+        .map(|(k, _)| k.clone())
+        .collect();
+    for k in expired {
+        sessions.remove(&k);
+    }
+}
+
 /// 验证服务端 API Key 是否有效
 async fn verify_key_handler(
     State(state): State<AppState>,
@@ -133,14 +178,15 @@ async fn login_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(creds): Json<LoginRequest>,
-) -> (StatusCode, Json<LoginResponse>) {
+) -> (StatusCode, Json<AuthResponse>) {
     if let Err((code, msg)) = check_api_key(&state, &headers) {
         return (
             code,
-            Json(LoginResponse {
+            Json(AuthResponse {
                 success: false,
                 username: creds.username,
                 message: msg,
+                token: String::new(),
             }),
         );
     }
@@ -148,10 +194,11 @@ async fn login_handler(
     if creds.username.is_empty() || creds.password.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(LoginResponse {
+            Json(AuthResponse {
                 success: false,
                 username: creds.username,
                 message: "Username and password are required".into(),
+                token: String::new(),
             }),
         );
     }
@@ -164,21 +211,84 @@ async fn login_handler(
         .any(|p| p.username == creds.username && p.password_hash == password_hash);
 
     if valid {
+        let mut sessions = state.sessions.lock().unwrap();
+        cleanup_expired_sessions(&mut sessions);
+
+        // 顶号：删除该用户已有的 session
+        let old_tokens: Vec<String> = sessions
+            .iter()
+            .filter(|(_, s)| s.username == creds.username)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for old_token in old_tokens {
+            sessions.remove(&old_token);
+        }
+
+        let token = generate_token();
+        sessions.insert(
+            token.clone(),
+            Session {
+                username: creds.username.clone(),
+                expires_at: Instant::now() + Duration::from_secs(SESSION_TTL_SECS),
+            },
+        );
+
         (
             StatusCode::OK,
-            Json(LoginResponse {
+            Json(AuthResponse {
                 success: true,
                 username: creds.username.clone(),
                 message: "Authentication successful".into(),
+                token,
             }),
         )
     } else {
         (
             StatusCode::FORBIDDEN,
-            Json(LoginResponse {
+            Json(AuthResponse {
                 success: false,
                 username: creds.username,
                 message: "Invalid username or password".into(),
+                token: String::new(),
+            }),
+        )
+    }
+}
+
+/// 续约 session
+async fn renew_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<RenewRequest>,
+) -> (StatusCode, Json<RenewResponse>) {
+    if let Err((code, msg)) = check_api_key(&state, &headers) {
+        return (
+            code,
+            Json(RenewResponse {
+                success: false,
+                message: msg,
+            }),
+        );
+    }
+
+    let mut sessions = state.sessions.lock().unwrap();
+    cleanup_expired_sessions(&mut sessions);
+
+    if let Some(session) = sessions.get_mut(&req.token) {
+        session.expires_at = Instant::now() + Duration::from_secs(SESSION_TTL_SECS);
+        (
+            StatusCode::OK,
+            Json(RenewResponse {
+                success: true,
+                message: "Session renewed".into(),
+            }),
+        )
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(RenewResponse {
+                success: false,
+                message: "Session not found or expired".into(),
             }),
         )
     }
@@ -208,11 +318,13 @@ async fn main() {
     let state = AppState {
         players: Arc::new(Mutex::new(players)),
         api_keys,
+        sessions: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = Router::new()
         .route("/api/auth/verify-key", post(verify_key_handler))
         .route("/api/auth/login", post(login_handler))
+        .route("/api/session/renew", post(renew_handler))
         .route("/api/health", get(health_handler))
         .with_state(state);
 

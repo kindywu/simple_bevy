@@ -47,7 +47,11 @@ pub struct RespawnTimer(pub Timer);
 pub struct OnlinePlayers {
     pub by_name: HashMap<String, Entity>,   // username -> player_entity
     pub by_client: HashMap<Entity, String>, // client_entity -> username
+    pub tokens: HashMap<String, String>,    // username -> session token
 }
+
+#[derive(Resource)]
+pub struct SessionRenewalTimer(pub Timer);
 
 pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let h = h / 60.0;
@@ -139,8 +143,9 @@ pub fn server_on_connect(
                         return;
                     }
                     match auth::validate_credentials(&api_key.0, &creds) {
-                        Ok(username) => {
+                        Ok((username, token)) => {
                             info!("玩家认证成功: {}", username);
+                            online_players.tokens.insert(username.clone(), token);
                             Some(username)
                         }
                         Err(msg) => {
@@ -220,6 +225,48 @@ pub fn server_on_disconnect(
         if let Some(player_entity) = online_players.by_name.remove(&username) {
             commands.entity(player_entity).despawn();
             info!("玩家 {} 断开连接，实体 {:?} 已清理", username, player_entity);
+        }
+        online_players.tokens.remove(&username);
+    }
+}
+
+pub fn renew_sessions_system(
+    online_players: ResMut<OnlinePlayers>,
+    api_key: Res<ApiKey>,
+    platform: Res<PlatformConnected>,
+    mut timer: ResMut<SessionRenewalTimer>,
+    clients: Query<&NetworkId>,
+    mut server: ResMut<RenetServer>,
+    time: Res<Time>,
+) {
+    if !timer.0.tick(time.delta()).just_finished() {
+        return;
+    }
+
+    if !platform.0 {
+        return;
+    }
+
+    let tokens: Vec<(String, String)> = online_players
+        .tokens
+        .iter()
+        .map(|(u, t)| (u.clone(), t.clone()))
+        .collect();
+
+    for (username, token) in tokens {
+        match auth::renew_session(&api_key.0, &token) {
+            Ok(()) => {
+                debug!("玩家 {} session 续约成功", username);
+            }
+            Err(msg) => {
+                warn!("玩家 {} session 续约失败: {}，断开连接", username, msg);
+                // 查找对应的 client_entity 并断开
+                if let Some((&client_entity, _)) = online_players.by_client.iter().find(|(_, u)| *u == &username) {
+                    if let Ok(network_id) = clients.get(client_entity) {
+                        server.disconnect(network_id.get());
+                    }
+                }
+            }
         }
     }
 }
@@ -321,6 +368,7 @@ pub fn run(api_key: &str) {
     app.init_resource::<OnlinePlayers>();
     app.add_observer(server_on_connect);
     app.add_observer(server_on_disconnect);
+    app.insert_resource(SessionRenewalTimer(Timer::from_seconds(30.0, TimerMode::Repeating)));
     app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard, verify_platform_connection));
     app.add_systems(
         Update,
@@ -340,6 +388,7 @@ pub fn run(api_key: &str) {
             apply_bullet_position,
             update_visibility,
             update_scoreboard,
+            renew_sessions_system,
         )
             .chain(),
     );
