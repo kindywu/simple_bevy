@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::{
     Json, Router,
     extract::State,
@@ -79,9 +80,20 @@ fn hash_password(password: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn load_players(path: &str) -> PlayerDb {
-    let contents = std::fs::read_to_string(path).unwrap_or_default();
-    let mut db: PlayerDb = serde_json::from_str(&contents).unwrap_or(PlayerDb { players: vec![] });
+fn load_players(path: &str) -> anyhow::Result<PlayerDb> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).with_context(|| format!("读取玩家数据库失败: {}", path))?,
+    };
+
+    let mut db: PlayerDb = if contents.trim().is_empty() {
+        PlayerDb { players: vec![] }
+    } else {
+        serde_json::from_str(&contents)
+            .with_context(|| format!("解析玩家数据库失败: {}", path))?
+    };
+
     let mut changed = false;
     for player in &mut db.players {
         if player.password_hash.is_empty() {
@@ -99,15 +111,27 @@ fn load_players(path: &str) -> PlayerDb {
                 })
                 .collect();
         }
-        let json = serde_json::to_string_pretty(&db).unwrap();
-        std::fs::write(path, json).unwrap();
+        let json = serde_json::to_string_pretty(&db).context("序列化玩家数据库失败")?;
+        std::fs::write(path, json)
+            .with_context(|| format!("写入玩家数据库失败: {}", path))?;
     }
-    db
+    Ok(db)
 }
 
-fn load_api_keys(path: &str) -> ApiKeyDb {
-    let contents = std::fs::read_to_string(path).unwrap_or_default();
-    serde_json::from_str(&contents).unwrap_or(ApiKeyDb { keys: vec![] })
+fn load_api_keys(path: &str) -> anyhow::Result<ApiKeyDb> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).with_context(|| format!("读取 API Key 数据库失败: {}", path))?,
+    };
+
+    let db: ApiKeyDb = if contents.trim().is_empty() {
+        ApiKeyDb { keys: vec![] }
+    } else {
+        serde_json::from_str(&contents)
+            .with_context(|| format!("解析 API Key 数据库失败: {}", path))?
+    };
+    Ok(db)
 }
 
 fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
@@ -301,12 +325,12 @@ async fn health_handler() -> Json<serde_json::Value> {
 const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let players_path = format!("{MANIFEST_DIR}/players.json");
     let api_keys_path = format!("{MANIFEST_DIR}/api_keys.json");
 
-    let players = load_players(&players_path);
-    let api_keys = load_api_keys(&api_keys_path);
+    let players = load_players(&players_path).context("加载玩家数据失败")?;
+    let api_keys = load_api_keys(&api_keys_path).context("加载 API Key 失败")?;
 
     println!("Platform started");
     println!("  {} players loaded:", players.players.len());
@@ -333,13 +357,15 @@ async fn main() {
         format!("{MANIFEST_DIR}/certs/localhost-key.pem"),
     )
     .await
-    .expect("Failed to load TLS certificates (run: mkcert -install && cd platform/certs && mkcert localhost 127.0.0.1 ::1)");
+    .context("加载 TLS 证书失败 (请先运行: mkcert -install && cd platform/certs && mkcert localhost 127.0.0.1 ::1)")?;
 
-    let addr = "127.0.0.1:3001".parse().unwrap();
+    let addr = "127.0.0.1:3001".parse().context("解析监听地址失败")?;
     println!("Platform listening on https://127.0.0.1:3001");
 
     axum_server::bind_rustls(addr, tls_config)
         .serve(app.into_make_service())
         .await
-        .unwrap();
+        .context("启动 HTTPS 服务失败")?;
+
+    Ok(())
 }

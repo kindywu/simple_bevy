@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = { version = "1", features = ["std"] }
 axum = "0.8.9"
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls"] }
 hex = "0.4"
