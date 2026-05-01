@@ -1,5 +1,6 @@
 use shared::*;
 use bevy::prelude::*;
+use bevy_ui_widgets::{Activate, ButtonPlugin};
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RenetClient;
 
@@ -7,7 +8,7 @@ mod login;
 mod render;
 mod scoreboard;
 
-use login::{GameState, LoginData, cleanup_login, handle_connect, handle_login_input, render_login_text, setup_login_screen};
+use login::{GameState, LoginData, advance_login, cleanup_login, handle_connect, handle_login_input, render_login_text, setup_login_screen};
 use render::{apply_bullet_position, apply_position, spawn_bullet_render, spawn_render, update_visibility};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
@@ -100,6 +101,10 @@ pub fn setup_camera(mut commands: Commands) {
     commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
 }
 
+fn on_login_button_activate(_trigger: On<Activate>, mut login_data: ResMut<LoginData>) {
+    advance_login(&mut login_data);
+}
+
 pub fn run() {
     let mut app = App::new();
 
@@ -129,6 +134,8 @@ pub fn run() {
 
     app.init_state::<GameState>();
     app.init_resource::<LoginData>();
+    app.add_plugins(ButtonPlugin);
+    app.add_observer(on_login_button_activate);
 
     app.add_systems(Startup, (setup_camera, setup_scoreboard));
     app.add_systems(OnEnter(GameState::Login), setup_login_screen);

@@ -2096,6 +2096,7 @@ dependencies = [
  "bevy_renet",
  "bevy_replicon",
  "bevy_replicon_renet",
+ "bevy_ui_widgets",
  "serde",
  "serde_json",
  "shared",

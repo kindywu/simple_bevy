@@ -31,8 +31,7 @@ Write-Host ""
 Write-Host "Press any key to stop all processes..."
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
-$platform.Kill()
-$server.Kill()
-$client1.Kill()
-$client2.Kill()
+foreach ($p in @($platform, $server, $client1, $client2)) {
+    if (!$p.HasExited) { $p.Kill() }
+}
 Write-Host "All processes stopped"

@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
+use bevy_ui_widgets::Button;
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::{
     RenetChannelsExt, RenetClient,
@@ -38,6 +40,9 @@ pub(crate) struct LoginRoot;
 
 #[derive(Component)]
 pub(crate) struct LoginText;
+
+#[derive(Component)]
+pub(crate) struct SubmitButtonText;
 
 fn char_for_key(key: KeyCode) -> Option<char> {
     match key {
@@ -79,6 +84,30 @@ fn char_for_key(key: KeyCode) -> Option<char> {
         KeyCode::Digit9 => Some('9'),
         KeyCode::Space => Some(' '),
         _ => None,
+    }
+}
+
+pub fn advance_login(login_data: &mut LoginData) {
+    if login_data.connect_requested {
+        return;
+    }
+    match login_data.step {
+        LoginStep::Username => {
+            if login_data.username.is_empty() {
+                login_data.status = Some("请输入用户名".into());
+            } else {
+                login_data.status = None;
+                login_data.step = LoginStep::Password;
+            }
+        }
+        LoginStep::Password => {
+            if login_data.password.is_empty() {
+                login_data.status = Some("请输入密码".into());
+            } else {
+                login_data.connect_requested = true;
+                login_data.status = Some("Connecting...".into());
+            }
+        }
     }
 }
 
@@ -168,6 +197,29 @@ pub fn setup_login_screen(
                         TextColor(Color::WHITE),
                     ));
 
+                    // Submit button
+                    panel.spawn((
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(24.0), Val::Px(8.0)),
+                            border_radius: BorderRadius::all(Val::Px(6.0)),
+                            margin: UiRect::top(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.2, 0.3, 0.6)),
+                    )).with_children(|btn| {
+                        btn.spawn((
+                            SubmitButtonText,
+                            Text::new("下一步"),
+                            TextFont {
+                                font: font.clone(),
+                                font_size: 18.0,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+
                     // Status/error
                     panel.spawn((
                         LoginText,
@@ -183,8 +235,17 @@ pub fn setup_login_screen(
         });
 }
 
-pub fn render_login_text(login_data: Res<LoginData>, mut texts: Query<&mut Text, With<LoginText>>) {
-    let mut iter = texts.iter_mut();
+pub fn render_login_text(
+    login_data: Res<LoginData>,
+    mut texts: ParamSet<(
+        Query<&mut Text, With<LoginText>>,
+        Query<&mut Text, With<SubmitButtonText>>,
+    )>,
+    button_entity: Query<Entity, (With<Button>, Without<SubmitButtonText>)>,
+    mut commands: Commands,
+) {
+    let mut p0 = texts.p0();
+    let mut iter = p0.iter_mut();
     let mut username_row = iter.next().unwrap();
     let mut prompt = iter.next().unwrap();
     let mut input_field = iter.next().unwrap();
@@ -208,6 +269,22 @@ pub fn render_login_text(login_data: Res<LoginData>, mut texts: Query<&mut Text,
     }
 
     **status = login_data.status.clone().unwrap_or_default();
+    drop(p0);
+
+    if let Ok(mut btn) = texts.p1().single_mut() {
+        **btn = match login_data.step {
+            LoginStep::Username => "下一步".to_string(),
+            LoginStep::Password => "登录".to_string(),
+        };
+    }
+
+    if let Ok(btn_entity) = button_entity.single() {
+        if login_data.connect_requested {
+            commands.entity(btn_entity).insert(InteractionDisabled);
+        } else {
+            commands.entity(btn_entity).remove::<InteractionDisabled>();
+        }
+    }
 }
 
 pub fn handle_login_input(keys: Res<ButtonInput<KeyCode>>, mut login_data: ResMut<LoginData>) {
@@ -231,24 +308,7 @@ pub fn handle_login_input(keys: Res<ButtonInput<KeyCode>>, mut login_data: ResMu
     }
 
     if just_pressed(KeyCode::Enter) {
-        match login_data.step {
-            LoginStep::Username => {
-                if login_data.username.is_empty() {
-                    login_data.status = Some("请输入用户名".into());
-                } else {
-                    login_data.status = None;
-                    login_data.step = LoginStep::Password;
-                }
-            }
-            LoginStep::Password => {
-                if login_data.password.is_empty() {
-                    login_data.status = Some("请输入密码".into());
-                } else {
-                    login_data.connect_requested = true;
-                    login_data.status = Some("Connecting...".into());
-                }
-            }
-        }
+        advance_login(&mut login_data);
         return;
     }
 

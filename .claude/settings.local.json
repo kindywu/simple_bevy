@@ -16,9 +16,16 @@
       "Bash(export PATH=\"$PATH:/c/Users/kindy/AppData/Local/Microsoft/WinGet/Packages/FiloSottile.mkcert_Microsoft.Winget.Source_8wekyb3d8bbwe\")",
       "Bash(curl -sk https://127.0.0.1:3001/api/health)",
       "Bash(kill %1)",
-      "Bash(curl -sk -X POST https://127.0.0.1:3001/api/auth/verify-key -H 'Authorization: Bearer super-secret-platform-api-key' -H 'Content-Type: application/json')",
-      "Bash(curl -sk -X POST https://127.0.0.1:3001/api/auth/login -H 'Authorization: Bearer super-secret-platform-api-key' -H 'Content-Type: application/json' -d '{\"username\":\"kindy\",\"password\":\"kindy\"}')",
-      "Bash(curl -sk -X POST https://127.0.0.1:3001/api/auth/login -H 'Authorization: Bearer game-server-secret-key-001' -H 'Content-Type: application/json' -d '{\"username\":\"kindy\",\"password\":\"kindy\"}')"
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:kenney.nl)",
+      "WebFetch(domain:opengameart.org)",
+      "Bash(curl -L -o SpaceShooterRedux.zip \"https://kenney.nl/assets/space-shooter-redux/SpaceShooterRedux.zip\")",
+      "Bash(curl -L -o kenney_pixelshmup.zip \"https://opengameart.org/sites/default/files/kenney_pixelshmup.zip\")",
+      "Bash(curl -L -o ImpactSounds.zip \"https://kenney.nl/assets/impact-sounds/ImpactSounds.zip\")",
+      "Bash(curl -s -L -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" -H \"Referer: https://kenney.nl/assets/space-shooter-redux\" \"https://kenney.nl/assets/space-shooter-redux\")",
+      "Bash(unzip -l kenney_pixelshmup.zip)",
+      "Bash(curl -s -L -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/131.0.0.0 Safari/537.36\" -H \"Accept: text/html,application/xhtml+xml\" \"https://kenney.nl/assets/space-shooter-redux\")",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

@@ -11,3 +11,4 @@ bevy_replicon = { workspace = true }
 bevy_replicon_renet = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+bevy_ui_widgets = "0.18.1"
