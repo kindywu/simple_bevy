@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     extract::State,
@@ -80,7 +80,7 @@ fn hash_password(password: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn load_players(path: &str) -> anyhow::Result<PlayerDb> {
+fn load_players(path: &str) -> Result<PlayerDb> {
     let contents = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -90,8 +90,7 @@ fn load_players(path: &str) -> anyhow::Result<PlayerDb> {
     let mut db: PlayerDb = if contents.trim().is_empty() {
         PlayerDb { players: vec![] }
     } else {
-        serde_json::from_str(&contents)
-            .with_context(|| format!("解析玩家数据库失败: {}", path))?
+        serde_json::from_str(&contents).with_context(|| format!("解析玩家数据库失败: {}", path))?
     };
 
     let mut changed = false;
@@ -112,13 +111,12 @@ fn load_players(path: &str) -> anyhow::Result<PlayerDb> {
                 .collect();
         }
         let json = serde_json::to_string_pretty(&db).context("序列化玩家数据库失败")?;
-        std::fs::write(path, json)
-            .with_context(|| format!("写入玩家数据库失败: {}", path))?;
+        std::fs::write(path, json).with_context(|| format!("写入玩家数据库失败: {}", path))?;
     }
     Ok(db)
 }
 
-fn load_api_keys(path: &str) -> anyhow::Result<ApiKeyDb> {
+fn load_api_keys(path: &str) -> Result<ApiKeyDb> {
     let contents = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -142,10 +140,8 @@ fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn check_api_key(state: &AppState, headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
-    let token = extract_api_key(headers).ok_or((
-        StatusCode::UNAUTHORIZED,
-        "Missing API key".into(),
-    ))?;
+    let token =
+        extract_api_key(headers).ok_or((StatusCode::UNAUTHORIZED, "Missing API key".into()))?;
     if !state.api_keys.keys.iter().any(|k| k == token) {
         return Err((StatusCode::UNAUTHORIZED, "Invalid API key".into()));
     }
@@ -325,7 +321,7 @@ async fn health_handler() -> Json<serde_json::Value> {
 const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let players_path = format!("{MANIFEST_DIR}/players.json");
     let api_keys_path = format!("{MANIFEST_DIR}/api_keys.json");
 
