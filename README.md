@@ -20,7 +20,7 @@ winget install FiloSottile.mkcert          # Windows
 # brew install mkcert                       # macOS
 # apt install mkcert                        # Linux
 mkcert -install
-cd platform/certs && mkcert localhost 127.0.0.1 ::1 && cd ../..
+cd platform/certs && mkcert localhost && cd ../..
 
 # 1. 启动平台认证服务（先启动，HTTPS://127.0.0.1:3001）
 cargo run -p platform
