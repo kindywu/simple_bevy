@@ -10,6 +10,8 @@
 - **登录界面**：客户端两步式登录 UI（用户名 → 密码），支持中英文输入
 - **战斗系统**：三角形尖端碰撞检测（近战击杀）+ 子弹射击系统，含冷却、伤害和击杀得分
 - **生命值 & 重生**：每位玩家 3 点 HP，死亡后 3 秒自动安全重生
+- **防重复登录**：已认证玩家无法通过同一账号二次连接
+- **Session 自动续约**：服务端每 30 秒向平台验证在线玩家 token，过期自动断开
 - **排行榜**：实时显示所有玩家分数排名
 
 ## 运行
@@ -65,10 +67,13 @@ cargo run -p lab --example single -- client
 - [Bevy](https://bevyengine.org/) 0.18 — 游戏引擎
 - [bevy_replicon](https://github.com/projectharmonia/bevy_replicon) — 网络复制框架
 - [bevy_replicon_renet](https://github.com/projectharmonia/bevy_replicon_renet) — renet 传输层
+- [bevy_ui_widgets](https://github.com/ratwizard/bevy_ui_widgets) — UI 按钮与交互组件
 - [Axum](https://github.com/tokio-rs/axum) + Tokio — 平台 HTTP API
 - ureq (native-tls) — 服务端→平台 HTTPS 客户端
 - serde + bincode / serde_json — 序列化
 - rand — 安全重生点随机生成
+
+
 
 ## 架构
 

@@ -45,23 +45,23 @@ graph TB
 
 | 文件 | 行数 | 角色 |
 |------|------|------|
-| `shared/src/lib.rs` | 84 | 全部共享类型定义（组件、资源、消息、常量） |
-| `platform/src/main.rs` | 225 | 认证服务：axum HTTPS (TLS)，SHA-256 密码，API Key 验证 |
-| `server/src/main.rs` | 326 | 服务端入口：网络启动、玩家认证、移动、裁剪、可见性 |
-| `server/src/auth.rs` | 82 | 平台 HTTPS API 调用：Key 验证、凭证验证 (ureq + rustls TLS) |
-| `server/src/bullet.rs` | 183 | 射击系统：冷却、发射、移动、碰撞、生命周期 |
-| `server/src/combat.rs` | 178 | 战斗检测（三角形碰撞）、安全重生点计算 |
-| `server/src/render.rs` | 76 | 服务端渲染：相机、网格、子弹渲染、Transform 同步 |
-| `server/src/scoreboard.rs` | 113 | 服务端排行榜（居中、中文、奖牌 emoji） |
-| `client/src/main.rs` | 155 | 客户端入口：状态机、输入、连接检测、相机 |
-| `client/src/login.rs` | 368 | 登录 UI：两步认证（用户名→密码）、网络连接发起 |
-| `client/src/render.rs` | 99 | 客户端渲染：本地玩家标记、子弹渲染、Transform、可见性 |
-| `client/src/scoreboard.rs` | 73 | 客户端排行榜（右上角、玩家名显示） |
-| `lab/examples/single.rs` | 312 | 单文件版多人游戏（无模块拆分） |
-| `lab/examples/finance.rs` | 669 | 完整 ECS 撮合引擎（sled 持久化 + axum REST API） |
-| `lab/examples/simple_finance.rs` | 266 | 简化 ECS 撮合引擎（无网络/持久化） |
-| `lab/examples/server.rs` | 14 | UDP socket 服务器测试 |
-| `lab/examples/client.rs` | 11 | UDP socket 客户端测试 |
+| `shared/src/lib.rs` | 96 | 全部共享类型定义（组件、资源、消息、常量） |
+| `platform/src/main.rs` | 345 | 认证服务：axum HTTPS (TLS)，SHA-256 密码，API Key 验证，Session 管理 |
+| `server/src/main.rs` | 423 | 服务端入口：网络启动、玩家认证、移动、裁剪、可见性、Session 续约 |
+| `server/src/auth.rs` | 168 | 平台 HTTPS API 调用：Key 验证、凭证验证、Session 续约 (ureq + rustls TLS) |
+| `server/src/bullet.rs` | 182 | 射击系统：冷却、发射、移动、碰撞、生命周期 |
+| `server/src/combat.rs` | 177 | 战斗检测（三角形碰撞）、安全重生点计算 |
+| `server/src/render.rs` | 75 | 服务端渲染：相机、网格、子弹渲染、Transform 同步 |
+| `server/src/scoreboard.rs` | 171 | 服务端排行榜（居中、中文、奖牌 emoji、按钮交互） |
+| `client/src/main.rs` | 161 | 客户端入口：状态机、输入、连接检测、相机、按钮交互 |
+| `client/src/login.rs` | 427 | 登录 UI：两步认证（用户名→密码）、网络连接发起、按钮交互 |
+| `client/src/render.rs` | 98 | 客户端渲染：本地玩家标记、子弹渲染、Transform、可见性 |
+| `client/src/scoreboard.rs` | 82 | 客户端排行榜（右上角、玩家名显示、按钮交互） |
+| `lab/examples/single.rs` | 311 | 单文件版多人游戏（无模块拆分） |
+| `lab/examples/finance.rs` | 668 | 完整 ECS 撮合引擎（sled 持久化 + axum REST API） |
+| `lab/examples/simple_finance.rs` | 265 | 简化 ECS 撮合引擎（无网络/持久化） |
+| `lab/examples/server.rs` | 13 | UDP socket 服务器测试 |
+| `lab/examples/client.rs` | 10 | UDP socket 客户端测试 |
 
 ---
 
@@ -756,7 +756,13 @@ pub struct ShootInput(pub u8);
 pub struct AuthCredentials { pub username: String, pub password: String; }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct AuthResponse { pub success: bool, pub username: String, pub message: String; }
+pub struct AuthResponse { pub success: bool, pub username: String, pub message: String, pub token: String; }
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct RenewRequest { pub token: String; }
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct RenewResponse { pub success: bool, pub message: String; }
 ```
 
 这两个类型在客户端（序列化到 `user_data`）、服务端（提取并转发到平台）、platform（反序列化处理）三重使用。
@@ -773,6 +779,8 @@ pub const BULLET_LIFETIME_SECS: f32 = 2.0;
 
 `PlayerCount` 是共享资源定义，但只有服务端实际使用它。客户端也 `init_resource::<PlayerCount>()` 但值始终为 0。
 
+> 📚 知识点：`ShootInput` 用元组结构体 `pub u8` — 字段 `0` 目前未使用，预留给未来扩展（如不同武器类型）。
+
 ---
 
 ## 第 7 级：Platform 认证服务 (`platform/src/main.rs`)
@@ -785,10 +793,12 @@ pub const BULLET_LIFETIME_SECS: f32 = 2.0;
 struct Player { username: String, password_hash: String; }
 struct PlayerDb { players: Vec<Player>; }
 struct ApiKeyDb { keys: Vec<String>; }
-struct AppState { players: Arc<Mutex<PlayerDb>>, api_keys: ApiKeyDb; }
+struct AppState { players: Arc<Mutex<PlayerDb>>, api_keys: ApiKeyDb, sessions: Arc<Mutex<HashMap<String, Session>>>; }
+struct Session { username: String, expires_at: Instant; }
 ```
 
 > 📚 知识点：`Arc<Mutex<PlayerDb>>` — 多线程共享可变状态。axum 的 handler 在 tokio 工作线程上并发执行，Mutex 提供内部可变性，Arc 提供共享所有权。player 密码为空时自动填充（hash(username)）。
+> 📚 知识点：Session 管理 — 平台维护 `HashMap<token, Session>`，登录时生成 32 位随机 token，60 秒过期。支持"顶号"（同一用户新登录会删除旧 session）。
 
 ### 7.2 密码哈希
 
@@ -820,7 +830,9 @@ fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
 
 **`POST /api/auth/verify-key`** — 验证 API Key 是否有效。服务端启动时通过 HTTPS 调用。
 
-**`POST /api/auth/login`** — 验证玩家凭据。接收 `LoginRequest { username, password }`，哈希密码后与数据库比对，返回 `LoginResponse { success, username, message }`。通过 HTTPS 调用。
+**`POST /api/auth/login`** — 验证玩家凭据。接收 `LoginRequest { username, password }`，哈希密码后与数据库比对，返回 `AuthResponse { success, username, message, token }`。通过 HTTPS 调用。支持"顶号"——同一用户新登录会删除旧 session。
+
+**`POST /api/session/renew`** — 续约 session。接收 `RenewRequest { token }`，刷新 session 过期时间。服务端每 30 秒调用一次。
 
 **`GET /api/health`** — 健康检查，返回 `{"status": "ok"}`。
 
@@ -928,6 +940,8 @@ pub fn server_on_connect(
     platform: Res<PlatformConnected>,
     clients: Query<&NetworkId>,
     mut server: ResMut<RenetServer>,
+    mut online_players: ResMut<OnlinePlayers>,
+    alive_players: Query<&Position, Without<Dead>>,
 )
 ```
 
@@ -940,14 +954,15 @@ pub fn server_on_connect(
 5. 从 `user_data` 中查找 `\0` 字节确定有效长度，截取 JSON
 6. `serde_json::from_slice::<AuthCredentials>(...)` — 反序列化认证凭据
 7. 如果 `!platform.0` — 平台不可用，直接 disconnect
-8. `auth::validate_credentials(&api_key.0, &creds)` — 调用平台 API 验证凭据
-9. 成功 → 使用平台返回的 username；失败 → `server.disconnect(client_id)`
-10. 无认证信息 → 使用 `Player_{id_num}` 作为默认名
-11. 金色角度计算 hue → `hsv_to_rgb()` → spawn 玩家实体
+8. `auth::validate_credentials(&api_key.0, &creds)` — 调用平台 API 验证凭据，返回 `(username, token)`
+9. **重复登录检测**：检查 `online_players.by_name.contains_key(username)`，若已在线则 disconnect
+10. 成功 → 存储 token 到 `online_players.tokens`，记录 `by_name` 和 `by_client` 映射
+11. 无认证信息 → 使用 `Player_{id_num}` 作为默认名
+12. 金色角度计算 hue → `hsv_to_rgb()` → `find_safe_spawn(&alive_positions)` 寻找安全重生点 → spawn 玩家实体
 
 > 📚 知识点：`server.disconnect(client_id)` — renet 服务端的主动断开连接方法。用于认证失败时拒绝客户端。
 
-**spawn 的组件**：`Replicated`, `PlayerId`, `PlayerName`, `Position`, `Direction`, `PlayerColor`, `Score`, `Health(MAX_HP)`, `ShootCooldown`（初始已冷却完成）
+**spawn 的组件**：`Replicated`, `PlayerId`, `PlayerName`, `Position`（安全重生点）, `Direction`, `PlayerColor`, `Score`, `Health(MAX_HP)`, `ShootCooldown`（初始已冷却完成）
 
 > 📚 知识点：`ShootCooldown` 的初始值 — `Timer::from_seconds(SHOOT_COOLDOWN_SECS, TimerMode::Once)` 然后立即 `.tick(duration)` 使冷却立即完成，这样玩家连接后可以立刻射击。
 
@@ -1018,13 +1033,18 @@ pub fn run(api_key: &str) {
     app.insert_resource(ApiKey(api_key.to_string()));
     app.insert_resource(PlatformConnected(true));
 
+    app.add_plugins(ButtonPlugin);
+    app.init_resource::<OnlinePlayers>();
     app.add_observer(server_on_connect);
+    app.add_observer(server_on_disconnect);
+    app.insert_resource(SessionRenewalTimer(Timer::from_seconds(30.0, TimerMode::Repeating)));
     app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard, verify_platform_connection));
     app.add_systems(Update, (
         spawn_render, tick_cooldowns, server_handle_input, server_handle_shoot,
         spawn_bullet_render, move_bullets, clamp_positions, bullet_player_collision,
         combat_detection, bullet_lifetime, respawn_dead_players,
         apply_position, apply_bullet_position, update_visibility, update_scoreboard,
+        renew_sessions_system,
     ).chain());
 
     app.run();
@@ -1033,6 +1053,12 @@ pub fn run(api_key: &str) {
 
 > 📚 知识点：`app.insert_resource(ApiKey(...))` — 手动插入 Resource（不是 `init_resource`），因为 ApiKey 没有实现 Default，需要提供值。
 
+**新增资源和 Observer**：
+- `ButtonPlugin` — `bevy_ui_widgets` 插件，为排行榜提供按钮交互
+- `OnlinePlayers` — 追踪已认证在线玩家：`by_name` (username→entity), `by_client` (client→username), `tokens` (username→token)
+- `SessionRenewalTimer` — 30 秒重复计时器，驱动 `renew_sessions_system`
+- `server_on_disconnect` — 客户端断开 Observer，清理 `OnlinePlayers` 并 despawn 玩家实体
+
 **系统执行顺序的原因**：
 - `tick_cooldowns` 必须早于 `server_handle_shoot`（要先减少冷却才能判断能否射击）
 - `spawn_bullet_render` 必须在 `server_handle_shoot` 之后（因为 bullet 刚被 spawn）
@@ -1040,6 +1066,47 @@ pub fn run(api_key: &str) {
 - `bullet_player_collision` 在 `combat_detection` 之前（先处理子弹伤害，再处理尖端碰撞）
 - `bullet_lifetime` 在 `combat_detection` 之后（过期子弹在碰撞检测后清理）
 - `apply_bullet_position` 在 `apply_position` 之后
+- `renew_sessions_system` 在最后（不依赖其他游戏逻辑，独立运行）
+
+#### 8.1.10 server_on_disconnect（Observer）
+
+```rust
+pub fn server_on_disconnect(
+    trigger: On<Remove, ConnectedClient>,
+    mut commands: Commands,
+    mut online_players: ResMut<OnlinePlayers>,
+)
+```
+
+客户端断开连接时触发：
+1. `client_entity = trigger.event_target()` — 获取断开连接的实体
+2. 从 `online_players.by_client` 查找 username
+3. 从 `online_players.by_name` 获取 player_entity 并 `despawn`
+4. 清理 `tokens` 中的对应 token
+
+> 📚 知识点：`On<Remove, ConnectedClient>` — 当 `ConnectedClient` 组件被移除时触发（客户端断开）。
+
+#### 8.1.11 renew_sessions_system
+
+```rust
+pub fn renew_sessions_system(
+    online_players: ResMut<OnlinePlayers>,
+    api_key: Res<ApiKey>,
+    platform: Res<PlatformConnected>,
+    mut timer: ResMut<SessionRenewalTimer>,
+    clients: Query<&NetworkId>,
+    mut server: ResMut<RenetServer>,
+    time: Res<Time>,
+)
+```
+
+每 30 秒执行一次 session 续约：
+1. `timer.0.tick(time.delta()).just_finished()` — 检查计时器是否到期
+2. 遍历 `online_players.tokens` 中所有已认证玩家的 token
+3. 调用 `auth::renew_session(&api_key.0, &token)` 向平台发送续约请求
+4. 成功 → `debug!` 日志；失败 → `warn!` 日志 → 查找对应 client_entity → `server.disconnect()`
+
+> 📚 知识点：Session 续约 — 防止玩家 token 过期后仍留在游戏中。平台 session TTL 为 60 秒，服务端每 30 秒续约一次，确保 token 始终有效。
 
 ### 8.2 `server/src/auth.rs` — 平台 API 调用
 
@@ -1047,7 +1114,8 @@ pub fn run(api_key: &str) {
 
 ```rust
 pub fn verify_api_key_with_retry(api_key: &str, max_retries: u32) -> Result<(), String>
-pub fn validate_credentials(api_key: &str, creds: &AuthCredentials) -> Result<String, String>
+pub fn validate_credentials(api_key: &str, creds: &AuthCredentials) -> Result<(String, String), String>
+pub fn renew_session(api_key: &str, token: &str) -> Result<(), String>
 
 /// 构建信任 mkcert CA 的 ureq Agent（延迟初始化，全局复用）
 fn tls_agent() -> &'static ureq::Agent
@@ -1071,7 +1139,9 @@ fn mkcert_ca_path() -> Option<PathBuf>
 
 **verify_api_key_with_retry**：启动时调用，带重试（最多 3 次，间隔 1 秒）。平台未启动时这给了一些容忍度。
 
-**validate_credentials**：每个玩家连接时调用。通过 `tls_agent()` 发 HTTPS POST 到 `/api/auth/login`，携带 JSON body 和 `Authorization: Bearer <key>` 头。成功返回 username。
+**validate_credentials**：每个玩家连接时调用。通过 `tls_agent()` 发 HTTPS POST 到 `/api/auth/login`，携带 JSON body 和 `Authorization: Bearer <key>` 头。成功返回 `(username, token)`。
+
+**renew_session**：`renew_sessions_system` 调用。通过 `tls_agent()` 发 HTTPS POST 到 `/api/session/renew`，携带 `RenewRequest { token }`。成功返回 `Ok(())`，失败返回错误信息。
 
 > 📚 知识点：`tls_agent().post(url).set(...).send_string(&body)` — 通过自定义 TLS Agent 的 HTTPS POST 请求。URL 从 `http://` 改为 `https://`。`send_string()` 而不是 `send_json()`，因为需要自定义 Content-Type 头。
 
@@ -1262,6 +1332,8 @@ let should_disconnect = (timer.0.is_finished() && !client.is_connected())
 ```rust
 app.init_state::<GameState>();
 app.init_resource::<LoginData>();
+app.add_plugins(ButtonPlugin);
+app.add_observer(on_login_button_activate);
 
 app.add_systems(OnEnter(GameState::Login), setup_login_screen);
 app.add_systems(OnExit(GameState::Login), cleanup_login);
@@ -1277,9 +1349,11 @@ app.add_systems(Update, (client_send_input, check_connection, spawn_render, spaw
 
 游戏系统使用 `.chain()` 确保执行顺序：先处理输入和连接，再创建渲染，最后同步变换和 UI。
 
+客户端注册了 `ButtonPlugin` 和 `on_login_button_activate` Observer，支持通过点击登录按钮提交。
+
 ### 9.2 `client/src/login.rs` — 登录 UI
 
-> 客户端最大的模块（368 行），实现了完整的登录交互。
+> 客户端最大的模块（427 行），实现了完整的登录交互，支持键盘和按钮两种提交方式。
 
 #### 9.2.1 状态和数据结构
 
@@ -1290,8 +1364,8 @@ pub enum LoginStep { Username, Password }
 ```
 
 **两步登录流程**：
-1. `Username` 阶段：用户输入用户名，回车确认
-2. `Password` 阶段：用户输入密码（屏幕显示为 `*`），回车提交
+1. `Username` 阶段：用户输入用户名，回车或点击按钮确认
+2. `Password` 阶段：用户输入密码（屏幕显示为 `*`），回车或点击按钮提交
 3. 提交后 → `connect_requested = true` → `handle_connect` 发起网络连接
 
 #### 9.2.2 setup_login_screen
@@ -1306,18 +1380,40 @@ LoginRoot (全屏容器, 背景色)
        ├── "用户: xxx" (用户名行, 14px)
        ├── "请输入用户名/密码" (提示, 18px)
        ├── "xxx_" (输入框, 28px)
+       ├── "下一步"/"登录" (提交按钮, bevy_ui_widgets::Button)
        └── "" (状态/错误信息, 16px, 红色)
 ```
 
-五个 `LoginText` 组件（同标记）挂在不同子实体上，在 `render_login_text` 中按顺序更新。
+五个 `LoginText` 组件（同标记）挂在不同子实体上，在 `render_login_text` 中按顺序更新。提交按钮使用 `bevy_ui_widgets::Button`，点击时触发 `On<Activate>` Observer。
 
-#### 9.2.3 handle_login_input
+#### 9.2.3 advance_login
 
-键盘输入处理：字符键（A-Z, 0-9, 空格）→ 追加到当前字段，Backspace → 删除末尾字符，Enter → 进入下一步或提交。
+```rust
+pub fn advance_login(login_data: &mut LoginData)
+```
+
+状态推进函数（键盘 Enter 或按钮点击都会调用）：
+- `Username` 阶段：检查用户名非空 → 进入 `Password` 阶段
+- `Password` 阶段：检查密码非空 → `connect_requested = true`
+
+#### 9.2.4 handle_login_input
+
+键盘输入处理：字符键（A-Z, 0-9, 空格）→ 追加到当前字段，Backspace → 删除末尾字符，Enter → 调用 `advance_login()`。
 
 > 📚 知识点：`keys.just_pressed(code)` — Bevy 的"刚按下"检测，只在按下的第一帧返回 true。`keys.pressed(code)` 是"按住"检测，每帧都返回 true。
 
-#### 9.2.4 handle_connect
+#### 9.2.5 render_login_text
+
+根据 `LoginData` 实时更新 UI 文本：
+- 用户名行：显示当前输入的用户名
+- 提示文本："请输入用户名" 或 "请输入密码"
+- 输入框：显示输入内容（密码用 `*` 掩码），带闪烁下划线
+- 提交按钮：根据阶段显示 "下一步" 或 "登录"
+- 状态文本：错误信息（红色）
+
+连接请求期间，按钮插入 `InteractionDisabled` 组件防止重复提交。
+
+#### 9.2.6 handle_connect
 
 网络连接发起：
 
@@ -1330,7 +1426,7 @@ LoginRoot (全屏容器, 背景色)
 
 > 📚 知识点：`user_data` 的 256 字节限制 — 用 `\0` 填充。服务端通过查找第一个 `\0` 确定有效数据长度。JSON 超过 256 字节时截断（用户名+密码一般远小于 256）。
 
-#### 9.2.5 cleanup_login
+#### 9.2.7 cleanup_login
 
 退出登录状态时清理所有带 `LoginRoot` 标记的 UI 实体。
 
@@ -1353,6 +1449,7 @@ LoginRoot (全屏容器, 背景色)
 - `align_items: FlexEnd` — 右对齐
 - 用 `TextSpan` 拼接所有文本（不每行一个实体）
 - 显示玩家名（`name.0`）而非 ID
+- 使用 `bevy_ui_widgets::Button` + `observe` 包裹排行榜文本，支持点击交互
 
 ---
 
@@ -1452,6 +1549,8 @@ transform.rotation = Quat::from_rotation_z(dir.angle);
 | `LocalSprite` | client/render | — | spawn_render (insert) | 不传输 |
 | `LocalPlayer` | client/render | — | spawn_render (insert) | 不传输 |
 | `LocalClientId` | client/main | — | handle_connect (insert) | 不传输 |
+| `OnlinePlayers` | server/main | server_on_connect, server_on_disconnect, renew_sessions_system | — | 不传输 |
+| `SessionRenewalTimer` | server/main | run() (init), renew_sessions_system (tick) | — | 不传输 |
 
 ### 11.4 Query 过滤模式汇总
 

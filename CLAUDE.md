@@ -42,7 +42,7 @@ Library crate with all shared ECS components, messages, resources, and constants
 
 ### Server (`server/`)
 
-Binary crate — the game server. Entry point is `src/main.rs`, which contains the `run()` function (app setup, system registration, observer wiring) and `main()` (.env loading). Submodules: `auth` (platform API calls over HTTPS with custom rustls TLS agent), `bullet` (shooting, movement, collision), `combat` (triangle tip-vs-body detection, respawn), `render` (mesh spawning, transform sync), `scoreboard` (centered Chinese UI).
+Binary crate — the game server. Entry point is `src/main.rs`, which contains the `run()` function (app setup, system registration, observer wiring) and `main()` (.env loading). Submodules: `auth` (platform API calls over HTTPS with custom rustls TLS agent, session renewal), `bullet` (shooting, movement, collision), `combat` (triangle tip-vs-body detection, respawn), `render` (mesh spawning, transform sync), `scoreboard` (centered Chinese UI).
 
 ### Client (`client/`)
 
@@ -66,7 +66,7 @@ Binary crate — the game client. Entry point is `src/main.rs`, with `run()` (ap
 - `PLATFORM_HOST` / `PLATFORM_PORT` — platform connection constants
 - `MoveInput` (dx, dy) — message type, client→server
 - `LocalSprite` / `LocalPlayer` — marker components, client-side only
-- `AuthCredentials` / `AuthResponse` — auth serialization types, shared between server and platform
+- `AuthCredentials` / `AuthResponse` / `RenewRequest` / `RenewResponse` — auth serialization types, shared between server and platform
 
 **Key systems**:
 - `spawn_render` — creates `Triangle2d` mesh + `LocalPlayer` marker for local player
@@ -74,12 +74,14 @@ Binary crate — the game client. Entry point is `src/main.rs`, with `run()` (ap
 - `server_handle_input` — reads `MoveInput` messages, updates Position and Direction
 - `client_send_input` — reads keyboard, normalizes input, sends `MoveInput`, updates local Direction
 - `check_connection` — 5-second timeout or server disconnect → transitions back to `GameState::Login`
-- `server_on_connect` — validates credentials via platform API over HTTPS (custom rustls TLS agent trusting mkcert CA), spawns player on success
+- `server_on_connect` — validates credentials via platform API over HTTPS (custom rustls TLS agent trusting mkcert CA), prevents duplicate logins, finds safe spawn position, spawns player on success
+- `server_on_disconnect` — cleans up `OnlinePlayers` mappings and despawns the player's entity
+- `renew_sessions_system` — periodically renews all online player session tokens, disconnects on failure
 - Login UI systems (`handle_login_input`, `render_login_text`, `handle_connect`) — only run in `GameState::Login`
 
 **Direction/rotation logic**: Angle is set to `atan2(dy, dx) - FRAC_PI_2` so the triangle's tip points in the movement direction. On the client, local Direction is updated immediately for responsive feel; on the server, Direction is only updated when input is non-zero.
 
-**Rendering**: Uses `Triangle2d` mesh (not sprites). Each player entity gets `Mesh2d` + `ColorMaterial`. `MeshMaterial2d` requires `bevy` 0.18's color material system.
+**Rendering**: Uses `Triangle2d` mesh (not sprites). Each player entity gets `Mesh2d` + `ColorMaterial`. `MeshMaterial2d` requires `bevy` 0.18's color material system. Both server and client use `bevy_ui_widgets` for interactive UI buttons in scoreboard and login screen.
 
 ### Lab (`lab/`)
 
@@ -102,6 +104,7 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 | `bevy` 0.18                          | Game engine (all examples)                         |
 | `bevy_replicon`                      | Network replication (core game, single example)    |
 | `bevy_replicon_renet` / `bevy_renet` | renet transport layer                              |
+| `bevy_ui_widgets`                    | UI buttons and interaction (login, scoreboard)     |
 | `axum` + `axum-server` + `tokio`    | HTTPS REST API (platform, finance example)         |
 | `sled`                               | Embedded DB for persistence (finance example only) |
 | `serde` + `bincode`                  | Serialization (all binaries)                       |

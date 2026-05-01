@@ -55,18 +55,26 @@ sequenceDiagram
     P-->>S: { valid: true/false }
 
     Note over C: GameState::Login
-    C->>C: 输入用户名 → 密码
+    C->>C: 输入用户名 → 密码（键盘或按钮）
 
     C->>S: renet 连接<br/>user_data = AuthCredentials JSON
     S->>P: POST /api/auth/login<br/>Authorization: Bearer <key> (TLS)
-    P-->>S: { success, username }
+    P-->>S: { success, username, token }
     alt 认证成功
-        S->>S: spawn 玩家实体 (PlayerName)
+        S->>S: 检查重复登录 → 存储 token → spawn 玩家实体 (PlayerName)
         S-->>C: Replicated 同步
         Note over C: GameState::InGame
     else 认证失败
         S->>C: server.disconnect()
         Note over C: 回到 GameState::Login
+    end
+
+    loop 每 30 秒
+        S->>P: POST /api/session/renew<br/>token (TLS)
+        P-->>S: { success }
+        alt 续约失败
+            S->>C: server.disconnect()
+        end
     end
 ```
 
@@ -98,7 +106,9 @@ sequenceDiagram
 | 类型 | 属性 | 说明 |
 |------|------|------|
 | `AuthCredentials` | username, password | 登录凭据，序列化到 user_data[256] |
-| `AuthResponse` | success, username, message | 平台认证响应 |
+| `AuthResponse` | success, username, message, token | 平台认证响应（含 session token） |
+| `RenewRequest` | token | Session 续约请求 |
+| `RenewResponse` | success, message | Session 续约响应 |
 | `LoginRequest` | username, password | 平台 HTTP 请求体 |
 | `LoginResponse` | success, username, message | 平台 HTTP 响应体 |
 
@@ -109,6 +119,8 @@ sequenceDiagram
 | `PlayerCount` | shared | 已连接玩家数，服务端用于金色角度颜色生成 |
 | `ApiKey` | server/auth | 服务端持有的平台 API Key |
 | `PlatformConnected` | server/auth | 平台是否可用（启动验证后设置） |
+| `OnlinePlayers` | server/main | 已认证在线玩家映射（by_name, by_client, tokens） |
+| `SessionRenewalTimer` | server/main | Session 续约计时器（30 秒重复） |
 | `RepliconChannels` | bevy_replicon | 网络通道配置 |
 | `RenetServer` / `RenetClient` | server / client | 网络实例 |
 | `NetcodeServerTransport` / `NetcodeClientTransport` | server / client | 传输层实例 |
@@ -156,10 +168,13 @@ sequenceDiagram
 - `DefaultPlugins`（窗口标题 "Bevy 多人游戏 - 服务端"）
 - `AssetPlugin`（`UnapprovedPathMode::Allow`，允许加载外部字体）
 - `RepliconPlugins` + `RepliconRenetPlugins`
+- `ButtonPlugin`（`bevy_ui_widgets`，用于排行榜按钮交互）
 
 **Replicated 类型**：Position, Direction, PlayerId, PlayerColor, Score, Dead, PlayerName, Health, Bullet
 
 **Client Message 类型**：MoveInput, ShootInput (Channel::Ordered)
+
+**Observer**：`server_on_connect`（客户端连入认证）、`server_on_disconnect`（客户端断开清理）
 
 **系统调度（Update，严格 `.chain()`）**：
 ```
@@ -167,7 +182,7 @@ spawn_render → tick_cooldowns → server_handle_input → server_handle_shoot
   → spawn_bullet_render → move_bullets → clamp_positions
   → bullet_player_collision → combat_detection → bullet_lifetime
   → respawn_dead_players → apply_position → apply_bullet_position
-  → update_visibility → update_scoreboard
+  → update_visibility → update_scoreboard → renew_sessions_system
 ```
 
 ### server/src/auth.rs — 平台认证
@@ -175,7 +190,8 @@ spawn_render → tick_cooldowns → server_handle_input → server_handle_shoot
 - `tls_agent()` — 全局复用的 ureq Agent，配置自定义 rustls TLS（信任 mkcert CA + 系统根证书），用于 HTTPS 调用平台 API
 - `mkcert_ca_path()` — 跨平台查找 mkcert 本地 CA 证书路径（Windows/Mac/Linux）
 - `verify_api_key_with_retry(api_key, max_retries)` — 启动时验证 Platform API Key，失败则重试（间隔 1 秒）
-- `validate_credentials(api_key, creds)` — 调用 `POST /api/auth/login` 验证玩家凭据
+- `validate_credentials(api_key, creds)` — 调用 `POST /api/auth/login` 验证玩家凭据，返回 `(username, token)`
+- `renew_session(api_key, token)` — 调用 `POST /api/session/renew` 续约 session
 - `ApiKey` 资源 — 存储 API Key
 - `PlatformConnected` 资源 — 标记平台是否可用，若不可用则拒绝所有玩家认证
 
@@ -237,15 +253,22 @@ spawn_render → tick_cooldowns → server_handle_input → server_handle_shoot
 - `GameState::Login`：运行 `handle_login_input`, `render_login_text`, `handle_connect`
 - `GameState::InGame`：运行 `client_send_input`, `check_connection`, `spawn_render`, `spawn_bullet_render`, `apply_position`, `apply_bullet_position`, `update_visibility`, `update_scoreboard`（`.chain()`）
 
+额外注册了 `ButtonPlugin` 和 `on_login_button_activate` Observer，支持登录按钮点击交互。
+
 `check_connection`：5 秒超时或服务器断开 → 清理网络资源 → 回到 `GameState::Login` 显示错误信息。
 
 ### client/src/login.rs — 登录界面
 
 **两步骤状态机**：
-1. `LoginStep::Username` — 输入用户名，回车进入下一步
-2. `LoginStep::Password` — 输入密码，回车触发连接
+1. `LoginStep::Username` — 输入用户名，回车或点击按钮进入下一步
+2. `LoginStep::Password` — 输入密码，回车或点击按钮触发连接
 
 **状态资源** `LoginData`：username, password, step, status（错误信息）, connect_requested（触发连接）
+
+**新增交互**：
+- 登录面板包含一个 **提交按钮**（"下一步"/"登录"），使用 `bevy_ui_widgets::Button`
+- 按钮点击通过 `On<Activate>` Observer 触发 `advance_login()`
+- 连接请求期间按钮插入 `InteractionDisabled` 防止重复提交
 
 **系统**：
 
@@ -274,6 +297,8 @@ spawn_render → tick_cooldowns → server_handle_input → server_handle_shoot
 
 右上角定位（`top: 10px, right: 15px`），使用 `TextSpan` 拼接所有玩家排名文本。显示玩家名和分数。
 
+使用 `bevy_ui_widgets::Button` + `observe` 包裹排行榜条目，支持点击交互。
+
 ## 网络架构
 
 ```mermaid
@@ -289,8 +314,8 @@ sequenceDiagram
     C->>C: 登录 UI (用户名 → 密码)
     C->>S: renet 连接 + user_data[256]
     S->>P: POST /api/auth/login (TLS)
-    P-->>S: { username }
-    S->>S: spawn 玩家实体 (Replicated)
+    P-->>S: { username, token }
+    S->>S: 检查重复登录 → 存储 token → spawn 玩家实体 (Replicated)
 
     loop 每帧
         C->>C: client_send_input<br/>WASD + Space
@@ -298,6 +323,14 @@ sequenceDiagram
         S->>S: 处理移动、射击、碰撞
         S-->>C: Replicated 同步 Position, Direction, Score, Health, Dead, Bullet
         C->>C: apply_position / apply_bullet_position
+    end
+
+    loop 每 30 秒
+        S->>P: POST /api/session/renew (TLS)
+        P-->>S: { success }
+        alt 续约失败
+            S->>C: disconnect
+        end
     end
 ```
 
