@@ -59,7 +59,7 @@
   - `login.rs` — 两步登录 UI（用户名 → 密码），通过 `user_data[256]` 携带凭据发起 renet 连接。
   - `render.rs` — 本地玩家标记 `LocalPlayer`、网格创建、Transform 同步、死亡可见性控制。
   - `scoreboard.rs` — 右上角排行榜。
-- **`platform`**：单文件 `src/main.rs`。提供 `POST /api/auth/verify-key`、`POST /api/auth/login`、`GET /api/health`。玩家凭据存于 `players.json`（SHA-256 哈希），API Key 存于 `api_keys.json`。
+- **`platform`**：单文件 `src/main.rs`。提供 `POST /api/auth/verify-key`、`POST /api/auth/login`、`POST /api/session/renew`、`GET /api/health`。玩家凭据存于 SQLite 数据库 `platform.db`（SHA-256 哈希），API Key 存于同一数据库。使用 `--init` 参数初始化数据库（创建表、插入默认用户和 API Key）。
 - **`lab`**：示例集合，通过 `cargo run -p lab --example <name>` 运行：
   - `finance` — ECS 撮合引擎 + sled 持久化 + axum REST API。
   - `single` — 单文件版多人游戏（无模块拆分）。
@@ -167,7 +167,7 @@ cargo run -p lab --example single -- client
 
 ### 认证与凭据
 
-- Platform 使用 **SHA-256** 对密码进行哈希（非加盐），存储在 `platform/players.json`。
+- Platform 使用 **SHA-256** 对密码进行哈希（非加盐），存储在 SQLite 数据库 `platform.db`。
 - 服务端与 Platform 之间通过 **HTTPS + Bearer Token** 通信，自定义 rustls 配置信任 mkcert 本地 CA 和系统根证书。
 - 玩家凭据通过 netcode 的 `user_data[256]` 字段从客户端传递到服务端，再转发到 Platform 验证。
 - **游戏网络层（renet）使用 `Unsecure` 认证模式**，仅适合本地开发，不具备生产环境安全性。
@@ -176,7 +176,7 @@ cargo run -p lab --example single -- client
 
 - `.env`：包含 `PLATFORM_API_KEY`，已加入 `.gitignore`。
 - `platform/certs/`：TLS 私钥和证书，已加入 `.gitignore`。
-- `platform/players.json` / `platform/api_keys.json`：运行时会自动初始化默认值，实际部署时应妥善保管。
+- `platform/players.json` / `platform/api_keys.json`：已替换为 SQLite 数据库（`platform.db`），迁移后不再使用。
 
 ## 网络架构速查
 

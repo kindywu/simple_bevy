@@ -25,7 +25,12 @@
       "Bash(curl -s -L -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" -H \"Referer: https://kenney.nl/assets/space-shooter-redux\" \"https://kenney.nl/assets/space-shooter-redux\")",
       "Bash(unzip -l kenney_pixelshmup.zip)",
       "Bash(curl -s -L -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/131.0.0.0 Safari/537.36\" -H \"Accept: text/html,application/xhtml+xml\" \"https://kenney.nl/assets/space-shooter-redux\")",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -k -X POST https://127.0.0.1:3001/api/auth/login -H 'Authorization: Bearer super-secret-platform-api-key' -H 'Content-Type: application/json' -d '{\"username\":\"kindy\",\"password\":\"kindy\"}')",
+      "Bash(pkill -f \"platform.exe\")",
+      "Bash(pkill -f \"server.exe\")",
+      "Bash(pkill -f \"client.exe\")",
+      "Bash(curl *)"
     ]
   }
 }

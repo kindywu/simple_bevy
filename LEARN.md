@@ -46,7 +46,11 @@ graph TB
 | 文件 | 行数 | 角色 |
 |------|------|------|
 | `shared/src/lib.rs` | 96 | 全部共享类型定义（组件、资源、消息、常量） |
-| `platform/src/main.rs` | 345 | 认证服务：axum HTTPS (TLS)，SHA-256 密码，API Key 验证，Session 管理 |
+| `platform/src/main.rs` | 81 | 认证服务：axum HTTPS (TLS)，SQLite 数据库，session 管理 |
+| `platform/src/handlers.rs` | 157 | API 处理器：verify-key, login, renew, health |
+| `platform/src/db.rs` | 90 | 数据库操作：init_db, load_players, load_api_keys |
+| `platform/src/auth.rs` | 50 | 工具函数：hash_password, generate_token, extract_api_key |
+| `platform/src/models.rs` | 68 | 数据结构：Player, Session, AppState, 请求/响应类型 |
 | `server/src/main.rs` | 423 | 服务端入口：网络启动、玩家认证、移动、裁剪、可见性、Session 续约 |
 | `server/src/auth.rs` | 168 | 平台 HTTPS API 调用：Key 验证、凭证验证、Session 续约 (ureq + rustls TLS) |
 | `server/src/bullet.rs` | 182 | 射击系统：冷却、发射、移动、碰撞、生命周期 |
@@ -579,7 +583,7 @@ Platform 是一个独立的 axum HTTP 服务，运行在 `127.0.0.1:3001`。
 4. 服务端提取 `user_data` → 反序列化 → 通过 HTTPS 调用 `/api/auth/login` 验证
 5. 认证成功 → spawn 玩家（带 `PlayerName`）；失败 → `server.disconnect(client_id)`
 
-**密码存储**：SHA-256 哈希，存于 `players.json`。默认用户：kindy, ananda, martin, amy（密码同用户名）。
+**密码存储**：SHA-256 哈希，存于 SQLite 数据库 `platform.db`。默认用户：kindy, ananda, martin, amy（密码同用户名）。运行 `cargo run -p platform -- --init` 初始化数据库。
 
 ### 4.5 serde + bincode — 序列化
 
@@ -783,11 +787,22 @@ pub const BULLET_LIFETIME_SECS: f32 = 2.0;
 
 ---
 
-## 第 7 级：Platform 认证服务 (`platform/src/main.rs`)
+## 第 7 级：Platform 认证服务 (`platform/src/`)
 
-> 📚 知识点：axum Router/State/Json/HeaderMap, axum-server TLS, rustls, tokio, SHA-256 哈希, `Arc<Mutex<>>`
+> 📚 知识点：axum Router/State/Json/HeaderMap, axum-server TLS, rustls, tokio, SHA-256 哈希, `Arc<Mutex<>>`, `sqlx` + SQLite
 
-### 7.1 数据结构
+### 7.1 模块结构
+
+```
+platform/src/
+├── main.rs     — 入口、路由、启动
+├── handlers.rs — API 处理器 (verify_key, login, renew, health)
+├── db.rs       — SQLite 数据库操作 (sqlx)
+├── auth.rs     — 工具函数 (hash_password, generate_token, extract_api_key)
+└── models.rs   — 数据结构
+```
+
+### 7.2 数据结构
 
 ```rust
 struct Player { username: String, password_hash: String; }
@@ -800,7 +815,7 @@ struct Session { username: String, expires_at: Instant; }
 > 📚 知识点：`Arc<Mutex<PlayerDb>>` — 多线程共享可变状态。axum 的 handler 在 tokio 工作线程上并发执行，Mutex 提供内部可变性，Arc 提供共享所有权。player 密码为空时自动填充（hash(username)）。
 > 📚 知识点：Session 管理 — 平台维护 `HashMap<token, Session>`，登录时生成 32 位随机 token，60 秒过期。支持"顶号"（同一用户新登录会删除旧 session）。
 
-### 7.2 密码哈希
+### 7.3 密码哈希
 
 ```rust
 fn hash_password(password: &str) -> String {
@@ -812,7 +827,7 @@ fn hash_password(password: &str) -> String {
 
 > 📚 知识点：SHA-256 — `sha2::Sha256::new()` 创建哈希器，`.update()` 输入数据，`.finalize()` 输出哈希，`hex::encode()` 转十六进制字符串。存储时存哈希而非明文。
 
-### 7.3 API Key 提取和验证
+### 7.4 API Key 提取和验证
 
 ```rust
 fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
@@ -826,7 +841,7 @@ fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
 
 > 📚 知识点：`HeaderMap` — axum 的 HTTP 请求头类型。`.get()` 返回 `Option<&HeaderValue>`，`.to_str()` 返回 `Result<&str, ToStrError>`，`.strip_prefix()` 返回 `Option<&str>`。
 
-### 7.4 API 端点
+### 7.5 API 端点
 
 **`POST /api/auth/verify-key`** — 验证 API Key 是否有效。服务端启动时通过 HTTPS 调用。
 
@@ -836,35 +851,44 @@ fn extract_api_key(headers: &HeaderMap) -> Option<&str> {
 
 **`GET /api/health`** — 健康检查，返回 `{"status": "ok"}`。
 
-### 7.5 服务器启动
+### 7.6 服务器启动
 
 ```rust
 #[tokio::main]
-async fn main() {
-    let state = AppState { players: Arc::new(Mutex::new(players)), api_keys };
+async fn main() -> Result<()> {
+    let db_path = PathBuf::from(MANIFEST_DIR).join("platform.db");
+    let pool = db::init_db(&db_path.to_string_lossy()).await?;
+    let players = db::load_players(&pool).await?;
+    let api_keys = db::load_api_keys(&pool).await?;
+
+    let state = AppState {
+        players: Arc::new(Mutex::new(players)),
+        api_keys,
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+    };
+
     let app = Router::new()
-        .route("/api/auth/verify-key", post(verify_key_handler))
-        .route("/api/auth/login", post(login_handler))
-        .route("/api/health", get(health_handler))
+        .route("/api/auth/verify-key", post(handlers::verify_key_handler))
+        .route("/api/auth/login", post(handlers::login_handler))
+        .route("/api/session/renew", post(handlers::renew_handler))
+        .route("/api/health", get(handlers::health_handler))
         .with_state(state);
 
     // 加载 mkcert 生成的 TLS 证书
     let tls_config = RustlsConfig::from_pem_file(
         format!("{MANIFEST_DIR}/certs/localhost.pem"),
         format!("{MANIFEST_DIR}/certs/localhost-key.pem"),
-    ).await.expect("Failed to load TLS certificates");
+    ).await?;
 
-    let addr = "127.0.0.1:3001".parse().unwrap();
-    println!("Platform listening on https://127.0.0.1:3001");
-
+    let addr = "127.0.0.1:3001".parse()?;
     axum_server::bind_rustls(addr, tls_config)
         .serve(app.into_make_service())
-        .await
-        .unwrap();
+        .await?;
+    Ok(())
 }
 ```
 
-> 📚 知识点：`#[tokio::main]` — 将 `async fn main()` 转换为同步入口，内部创建 tokio 异步运行时。`axum_server::bind_rustls` 绑定带 TLS 的 HTTPS 服务器，使用 rustls 作为 TLS 后端。证书由 mkcert 生成（`mkcert localhost 127.0.0.1 ::1`），存储在 `platform/certs/` 目录。
+> 📚 知识点：`#[tokio::main]` — 将 `async fn main()` 转换为同步入口，内部创建 tokio 异步运行时。使用 `anyhow::Result` 进行错误传播。`axum_server::bind_rustls` 绑定带 TLS 的 HTTPS 服务器。数据库使用 SQLite (`sqlx::SqlitePool`)，初始化时创建 `players` 和 `api_keys` 表，空库时自动插入默认用户和 API Key。
 
 ---
 
@@ -1582,8 +1606,10 @@ transform.rotation = Quat::from_rotation_z(dir.angle);
 | `ureq` 2 | 同步 HTTPS 客户端（server→platform） |
 | `rustls` 0.23 | TLS 协议实现（server→platform 客户端认证） |
 | `sled` 0.34 | 嵌入式数据库（finance 示例） |
-| `rand` 0.10 | 随机数（安全重生点、行情模拟） |
+| `rand` 0.10 | 随机数（安全重生点、行情模拟、session token 生成） |
 | `bincode` | 二进制序列化（finance 示例，bevy_replicon 内部也使用） |
+| `sqlx` + `sqlite` | SQLite 数据库驱动（platform only） |
+| `anyhow` | 错误处理（platform only） |
 
 ---
 

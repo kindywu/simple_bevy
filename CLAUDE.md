@@ -34,7 +34,7 @@ There are no tests in this project.
 
 ### Platform (`platform/`)
 
-Independent crate — axum HTTPS server on `127.0.0.1:3001` using `axum-server` with rustls TLS (mkcert certificates). Stores player credentials in `players.json` (SHA-256 hashed passwords) and valid server API keys in `api_keys.json`. The game server calls `POST /api/auth` over HTTPS with an `Authorization: Bearer <key>` header to validate players before spawning them. Default users: kindy, ananda, martin, amy (password = username).
+Independent crate — axum HTTPS server on `127.0.0.1:3001` using `axum-server` with rustls TLS (mkcert certificates). Stores player credentials in **SQLite** (`platform.db`, via `sqlx`) and valid server API keys in the same database. Uses `anyhow` for error handling, `rand` for session token generation. Default users: kindy, ananda, martin, amy (password = username).
 
 ### Shared (`shared/`)
 
@@ -89,7 +89,7 @@ Library crate hosting standalone examples and demos. Not depended on by any othe
 
 ### Finance Example (`lab/examples/finance.rs`)
 
-A separate binary: Bevy ECS-based trading engine with axum REST API + sled persistence. Order matching runs as a Bevy system. REST endpoints: `GET /trades`, `GET /accounts`, `GET /orders`, `POST /orders`. HTTP test file at `rest/test.rest`.
+A separate binary: Bevy ECS-based trading engine with **sled** persistence (not SQLite) + axum REST API + tokio. Order matching runs as a Bevy system. REST endpoints: `GET /trades`, `GET /accounts`, `GET /orders`, `POST /orders`. HTTP test file at `rest/test.rest`.
 
 ### Other Examples
 
@@ -102,15 +102,17 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 | Crate                                | Usage                                              |
 | ------------------------------------ | -------------------------------------------------- |
 | `bevy` 0.18                          | Game engine (all examples)                         |
-| `bevy_replicon`                      | Network replication (core game, single example)    |
+| `bevy_replicon`                      | Network replication (core game, single example)   |
 | `bevy_replicon_renet` / `bevy_renet` | renet transport layer                              |
 | `bevy_ui_widgets`                    | UI buttons and interaction (login, scoreboard)     |
 | `axum` + `axum-server` + `tokio`    | HTTPS REST API (platform, finance example)         |
-| `sled`                               | Embedded DB for persistence (finance example only) |
+| `sqlx` + `sqlite`                    | SQLite database (platform only)                    |
+| `anyhow`                             | Error handling (platform only)                     |
 | `serde` + `bincode`                  | Serialization (all binaries)                       |
 | `serde_json`                         | JSON serialization (credentials, platform API)     |
 | `ureq` + `rustls`                    | HTTPS client with custom TLS (server→platform)     |
 | `sha2` + `hex`                       | Password hashing (platform only)                   |
+| `rand`                               | Token generation (platform), spawn positioning     |
 
 ## Code Patterns
 
@@ -119,5 +121,6 @@ A separate binary: Bevy ECS-based trading engine with axum REST API + sled persi
 - **Golden angle color generation**: `hue = (count * 137.508) % 360` produces well-distributed distinct hues for successive players.
 - **State-based UI**: Client uses `GameState` enum (`Login`, `InGame`) to gate systems with `run_if(in_state(...))`. Login UI is two-step: username prompt, then password prompt.
 - **Credentials in user_data**: Client serializes `AuthCredentials` as JSON into the 256-byte `user_data` field of `ClientAuthentication::Unsecure`. Server extracts it via `NetcodeServerTransport::user_data(client_id)` and validates over HTTPS using a custom rustls TLS agent.
+- **Platform persistence**: Platform uses SQLite (`sqlx`) instead of JSON files. Run with `--init` flag to initialize the database. Player data and API keys persist across restarts.
 - **Editions**: Uses Rust edition 2024 (`Cargo.toml`).
-- **Workspace dependencies**: Shared crate versions (`bevy`, `bevy_renet`, `bevy_replicon`, `bevy_replicon_renet`, `serde`, `serde_json`, `rand`) are centralized in root `Cargo.toml` under `[workspace.dependencies]`. Member crates reference them with `workspace = true`. Platform-only deps (`axum`, `axum-server`, `tokio`, `sha2`, `hex`) stay in platform's own `Cargo.toml`. Server-only deps (`ureq`, `rustls`, `rustls-pemfile`, `rustls-native-certs`) stay in server's `Cargo.toml`.
+- **Workspace dependencies**: Shared crate versions (`bevy`, `bevy_renet`, `bevy_replicon`, `bevy_replicon_renet`, `serde`, `serde_json`, `rand`) are centralized in root `Cargo.toml` under `[workspace.dependencies]`. Member crates reference them with `workspace = true`. Platform-only deps (`axum`, `axum-server`, `tokio`, `sha2`, `hex`, `sqlx`, `anyhow`) stay in platform's own `Cargo.toml`. Server-only deps (`ureq`, `rustls`, `rustls-pemfile`, `rustls-native-certs`) stay in server's `Cargo.toml`.

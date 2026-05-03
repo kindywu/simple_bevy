@@ -24,6 +24,9 @@ winget install FiloSottile.mkcert          # Windows
 mkcert -install
 cd platform/certs && mkcert localhost && cd ../..
 
+# 0b. 初始化 SQLite 数据库（仅首次）
+cargo run -p platform -- --init
+
 # 1. 启动平台认证服务（先启动，HTTPS://127.0.0.1:3001）
 cargo run -p platform
 
