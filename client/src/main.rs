@@ -1,7 +1,6 @@
 use shared::*;
 use bevy::prelude::*;
 use bevy_ui_widgets::{Activate, ButtonPlugin};
-use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RenetClient;
 
 mod login;
@@ -9,7 +8,7 @@ mod render;
 mod scoreboard;
 
 use login::{GameState, LoginData, advance_login, cleanup_login, handle_connect, handle_login_input, render_login_text, setup_login_screen};
-use render::{apply_bullet_position, apply_position, spawn_bullet_render, spawn_render, update_visibility};
+use render::{spawn_bullet_render, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
 #[derive(Resource)]
@@ -97,10 +96,6 @@ pub(crate) fn check_connection(
     }
 }
 
-pub fn setup_camera(mut commands: Commands) {
-    commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
-}
-
 fn on_login_button_activate(_trigger: On<Activate>, mut login_data: ResMut<LoginData>) {
     advance_login(&mut login_data);
 }
@@ -116,28 +111,14 @@ pub fn run() {
         ..default()
     }));
 
-    app.add_plugins((RepliconPlugins, bevy_replicon_renet::RepliconRenetPlugins));
-
-    app.replicate::<Position>();
-    app.replicate::<Direction>();
-    app.replicate::<PlayerId>();
-    app.replicate::<PlayerColor>();
-    app.replicate::<Score>();
-    app.replicate::<Dead>();
-    app.replicate::<PlayerName>();
-    app.replicate::<Health>();
-    app.replicate::<Bullet>();
-
-    app.add_client_message::<MoveInput>(Channel::Ordered);
-    app.add_client_message::<ShootInput>(Channel::Ordered);
-    app.init_resource::<PlayerCount>();
+    shared::register_replicon_setup(&mut app);
 
     app.init_state::<GameState>();
     app.init_resource::<LoginData>();
     app.add_plugins(ButtonPlugin);
     app.add_observer(on_login_button_activate);
 
-    app.add_systems(Startup, (setup_camera, setup_scoreboard));
+    app.add_systems(Startup, (shared::setup_camera, setup_scoreboard));
     app.add_systems(OnEnter(GameState::Login), setup_login_screen);
     app.add_systems(OnExit(GameState::Login), cleanup_login);
     app.add_systems(
@@ -146,7 +127,7 @@ pub fn run() {
     );
     app.add_systems(
         Update,
-        (client_send_input, check_connection, spawn_render, spawn_bullet_render, apply_position, apply_bullet_position, update_visibility, update_scoreboard)
+        (client_send_input, check_connection, spawn_render, spawn_bullet_render, shared::apply_position, shared::apply_bullet_position, shared::update_visibility, update_scoreboard)
             .chain()
             .run_if(in_state(GameState::InGame)),
     );

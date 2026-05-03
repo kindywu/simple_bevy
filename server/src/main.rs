@@ -27,7 +27,7 @@ use bullet::{
     tick_cooldowns,
 };
 use combat::{combat_detection, find_safe_spawn, respawn_dead_players};
-use render::{apply_bullet_position, apply_position, setup_camera, spawn_bullet_render, spawn_render};
+use render::{spawn_bullet_render, spawn_render};
 use scoreboard::{setup_scoreboard, update_scoreboard};
 
 pub const MOVE_SPEED: f32 = 300.0;
@@ -302,29 +302,13 @@ pub fn clamp_positions(mut players: Query<&mut Position, (With<PlayerId>, Withou
     }
 }
 
-fn client_id_to_u64(id: ClientId, clients: &Query<&NetworkId>) -> u64 {
+pub(crate) fn client_id_to_u64(id: ClientId, clients: &Query<&NetworkId>) -> u64 {
     match id {
         ClientId::Server => 0,
         ClientId::Client(entity) => clients
             .get(entity)
             .map(|id| id.get().into())
             .unwrap_or_else(|_| entity.to_bits()),
-    }
-}
-
-pub fn update_visibility(
-    mut dead: Query<&mut Visibility, With<Dead>>,
-    mut alive: Query<&mut Visibility, (With<PlayerId>, Without<Dead>)>,
-) {
-    for mut vis in dead.iter_mut() {
-        if *vis != Visibility::Hidden {
-            *vis = Visibility::Hidden;
-        }
-    }
-    for mut vis in alive.iter_mut() {
-        if *vis != Visibility::Inherited {
-            *vis = Visibility::Inherited;
-        }
     }
 }
 
@@ -346,21 +330,8 @@ pub fn run(api_key: &str) {
             }),
     );
 
-    app.add_plugins((RepliconPlugins, bevy_replicon_renet::RepliconRenetPlugins));
+    shared::register_replicon_setup(&mut app);
 
-    app.replicate::<Position>();
-    app.replicate::<Direction>();
-    app.replicate::<PlayerId>();
-    app.replicate::<PlayerColor>();
-    app.replicate::<Score>();
-    app.replicate::<Dead>();
-    app.replicate::<PlayerName>();
-    app.replicate::<Health>();
-    app.replicate::<Bullet>();
-
-    app.add_client_message::<MoveInput>(Channel::Ordered);
-    app.add_client_message::<ShootInput>(Channel::Ordered);
-    app.init_resource::<PlayerCount>();
     app.insert_resource(ApiKey(api_key.to_string()));
     app.insert_resource(PlatformConnected(true));
 
@@ -369,7 +340,7 @@ pub fn run(api_key: &str) {
     app.add_observer(server_on_connect);
     app.add_observer(server_on_disconnect);
     app.insert_resource(SessionRenewalTimer(Timer::from_seconds(30.0, TimerMode::Repeating)));
-    app.add_systems(Startup, (setup_camera, start_server, setup_scoreboard, verify_platform_connection));
+    app.add_systems(Startup, (shared::setup_camera, start_server, setup_scoreboard, verify_platform_connection));
     app.add_systems(
         Update,
         (
@@ -384,9 +355,9 @@ pub fn run(api_key: &str) {
             combat_detection,
             bullet_lifetime,
             respawn_dead_players,
-            apply_position,
-            apply_bullet_position,
-            update_visibility,
+            shared::apply_position,
+            shared::apply_bullet_position,
+            shared::update_visibility,
             update_scoreboard,
             renew_sessions_system,
         )

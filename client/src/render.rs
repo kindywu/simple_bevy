@@ -62,37 +62,3 @@ pub fn spawn_bullet_render(
         ));
     }
 }
-
-pub fn apply_position(
-    mut entities: Query<(&Position, &Direction, &mut Transform)>,
-) {
-    for (pos, dir, mut transform) in entities.iter_mut() {
-        transform.translation = Vec3::new(pos.x, pos.y, 0.0);
-        transform.rotation = Quat::from_rotation_z(dir.angle);
-    }
-}
-
-pub fn apply_bullet_position(
-    mut bullets: Query<(&Bullet, &mut Transform)>,
-) {
-    for (bullet, mut transform) in bullets.iter_mut() {
-        transform.translation = Vec3::new(bullet.x, bullet.y, 0.0);
-        transform.rotation = Quat::from_rotation_z(bullet.angle);
-    }
-}
-
-pub fn update_visibility(
-    mut dead: Query<&mut Visibility, With<Dead>>,
-    mut alive: Query<&mut Visibility, (With<PlayerId>, Without<Dead>)>,
-) {
-    for mut vis in dead.iter_mut() {
-        if *vis != Visibility::Hidden {
-            *vis = Visibility::Hidden;
-        }
-    }
-    for mut vis in alive.iter_mut() {
-        if *vis != Visibility::Inherited {
-            *vis = Visibility::Inherited;
-        }
-    }
-}

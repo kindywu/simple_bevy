@@ -1,6 +1,6 @@
 use crate::{
     RespawnTimer, BOUNDARY_MARGIN, KILL_SCORE, RESPAWN_DELAY_SECS, VISIBLE_HALF_HEIGHT,
-    VISIBLE_HALF_WIDTH,
+    VISIBLE_HALF_WIDTH, client_id_to_u64,
 };
 use shared::*;
 use bevy::prelude::*;
@@ -168,15 +168,5 @@ pub fn bullet_player_collision(
                 break;
             }
         }
-    }
-}
-
-fn client_id_to_u64(id: ClientId, clients: &Query<&NetworkId>) -> u64 {
-    match id {
-        ClientId::Server => 0,
-        ClientId::Client(entity) => clients
-            .get(entity)
-            .map(|id| id.get().into())
-            .unwrap_or_else(|_| entity.to_bits()),
     }
 }

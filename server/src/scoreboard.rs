@@ -1,14 +1,6 @@
 use bevy::prelude::*;
 use bevy_ui_widgets::{Button, observe};
-use shared::{PlayerColor, PlayerId, PlayerName, Score};
-
-/// 排行榜根节点 Widget 标记
-#[derive(Component)]
-pub struct ScoreboardWidget;
-
-/// 排行榜条目 Widget 标记
-#[derive(Component)]
-struct ScoreboardEntry;
+use shared::{PlayerColor, PlayerId, PlayerName, Score, ScoreboardEntry, ScoreboardWidget};
 
 /// 排行榜标题 Widget 标记
 #[derive(Component)]

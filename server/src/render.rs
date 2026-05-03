@@ -4,10 +4,6 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct SpriteReady;
 
-pub fn setup_camera(mut commands: Commands) {
-    commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
-}
-
 pub fn spawn_render(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -53,23 +49,5 @@ pub fn spawn_bullet_render(
             Visibility::default(),
             InheritedVisibility::VISIBLE,
         ));
-    }
-}
-
-pub fn apply_position(
-    mut entities: Query<(&Position, &Direction, &mut Transform)>,
-) {
-    for (pos, dir, mut transform) in entities.iter_mut() {
-        transform.translation = Vec3::new(pos.x, pos.y, 0.0);
-        transform.rotation = Quat::from_rotation_z(dir.angle);
-    }
-}
-
-pub fn apply_bullet_position(
-    mut bullets: Query<(&Bullet, &mut Transform)>,
-) {
-    for (bullet, mut transform) in bullets.iter_mut() {
-        transform.translation = Vec3::new(bullet.x, bullet.y, 0.0);
-        transform.rotation = Quat::from_rotation_z(bullet.angle);
     }
 }

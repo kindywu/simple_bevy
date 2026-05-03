@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub const PORT: u16 = 5000;
@@ -94,3 +95,61 @@ pub const MAX_BULLETS_PER_PLAYER: usize = 5;
 pub const SHOOT_COOLDOWN_SECS: f32 = 0.3;
 pub const BULLET_SPEED: f32 = 500.0;
 pub const BULLET_LIFETIME_SECS: f32 = 2.0;
+
+#[derive(Component)]
+pub struct ScoreboardWidget;
+
+#[derive(Component)]
+pub struct ScoreboardEntry;
+
+pub fn register_replicon_setup(app: &mut App) {
+    app.add_plugins((RepliconPlugins, bevy_replicon_renet::RepliconRenetPlugins));
+
+    app.replicate::<Position>();
+    app.replicate::<Direction>();
+    app.replicate::<PlayerId>();
+    app.replicate::<PlayerColor>();
+    app.replicate::<Score>();
+    app.replicate::<Dead>();
+    app.replicate::<PlayerName>();
+    app.replicate::<Health>();
+    app.replicate::<Bullet>();
+
+    app.add_client_message::<MoveInput>(Channel::Ordered);
+    app.add_client_message::<ShootInput>(Channel::Ordered);
+    app.init_resource::<PlayerCount>();
+}
+
+pub fn setup_camera(mut commands: Commands) {
+    commands.spawn((Camera2d, Transform::default(), GlobalTransform::default()));
+}
+
+pub fn apply_position(mut entities: Query<(&Position, &Direction, &mut Transform)>) {
+    for (pos, dir, mut transform) in entities.iter_mut() {
+        transform.translation = Vec3::new(pos.x, pos.y, 0.0);
+        transform.rotation = Quat::from_rotation_z(dir.angle);
+    }
+}
+
+pub fn apply_bullet_position(mut bullets: Query<(&Bullet, &mut Transform)>) {
+    for (bullet, mut transform) in bullets.iter_mut() {
+        transform.translation = Vec3::new(bullet.x, bullet.y, 0.0);
+        transform.rotation = Quat::from_rotation_z(bullet.angle);
+    }
+}
+
+pub fn update_visibility(
+    mut dead: Query<&mut Visibility, With<Dead>>,
+    mut alive: Query<&mut Visibility, (With<PlayerId>, Without<Dead>)>,
+) {
+    for mut vis in dead.iter_mut() {
+        if *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+    }
+    for mut vis in alive.iter_mut() {
+        if *vis != Visibility::Inherited {
+            *vis = Visibility::Inherited;
+        }
+    }
+}
