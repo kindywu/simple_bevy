@@ -1,55 +1,89 @@
 use crate::auth::hash_password;
 use crate::models::{ApiKeyDb, Player, PlayerDb};
 use anyhow::{Context, Result};
+use sqlx::{Pool, Sqlite};
 
-pub fn load_players(path: &str) -> Result<PlayerDb> {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e).with_context(|| format!("读取玩家数据库失败: {}", path))?,
-    };
+pub type DbPool = Pool<Sqlite>;
 
-    let mut db: PlayerDb = if contents.trim().is_empty() {
-        PlayerDb { players: vec![] }
-    } else {
-        serde_json::from_str(&contents).with_context(|| format!("解析玩家数据库失败: {}", path))?
-    };
+pub async fn init_db(path: &str) -> Result<DbPool> {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect(&format!("sqlite:{path}"))
+        .await
+        .context("连接数据库失败")?;
 
-    let mut changed = false;
-    for player in &mut db.players {
-        if player.password_hash.is_empty() {
-            player.password_hash = hash_password(&player.username);
-            changed = true;
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS players (
+            username TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .context("创建 players 表失败")?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS api_keys (
+            key TEXT PRIMARY KEY
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .context("创建 api_keys 表失败")?;
+
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM players")
+        .fetch_one(&pool)
+        .await
+        .context("查询玩家数量失败")?;
+
+    if count.0 == 0 {
+        let default_players = ["kindy", "ananda", "martin", "amy"];
+        for name in default_players {
+            let hash = hash_password(name);
+            sqlx::query("INSERT INTO players (username, password_hash) VALUES (?, ?)")
+                .bind(name)
+                .bind(&hash)
+                .execute(&pool)
+                .await
+                .context("插入默认玩家失败")?;
         }
+        println!("已创建默认玩家: kindy, ananda, martin, amy (密码同用户名)");
     }
-    if changed || db.players.is_empty() {
-        if db.players.is_empty() {
-            db.players = vec!["kindy", "ananda", "martin", "amy"]
-                .into_iter()
-                .map(|name| Player {
-                    username: name.to_string(),
-                    password_hash: hash_password(name),
-                })
-                .collect();
-        }
-        let json = serde_json::to_string_pretty(&db).context("序列化玩家数据库失败")?;
-        std::fs::write(path, json).with_context(|| format!("写入玩家数据库失败: {}", path))?;
+
+    let key_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM api_keys")
+        .fetch_one(&pool)
+        .await
+        .context("查询 API Key 数量失败")?;
+
+    if key_count.0 == 0 {
+        let default_key = "super-secret-platform-api-key";
+        sqlx::query("INSERT INTO api_keys (key) VALUES (?)")
+            .bind(default_key)
+            .execute(&pool)
+            .await
+            .context("插入默认 API Key 失败")?;
+        println!("已创建默认 API Key: {default_key}");
     }
-    Ok(db)
+
+    Ok(pool)
 }
 
-pub fn load_api_keys(path: &str) -> Result<ApiKeyDb> {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e).with_context(|| format!("读取 API Key 数据库失败: {}", path))?,
-    };
+pub async fn load_players(pool: &DbPool) -> Result<PlayerDb> {
+    let players: Vec<Player> = sqlx::query_as("SELECT username, password_hash FROM players")
+        .fetch_all(pool)
+        .await
+        .context("查询玩家失败")?;
+    Ok(PlayerDb { players })
+}
 
-    let db: ApiKeyDb = if contents.trim().is_empty() {
-        ApiKeyDb { keys: vec![] }
-    } else {
-        serde_json::from_str(&contents)
-            .with_context(|| format!("解析 API Key 数据库失败: {}", path))?
-    };
-    Ok(db)
+pub async fn load_api_keys(pool: &DbPool) -> Result<ApiKeyDb> {
+    let keys: Vec<(String,)> = sqlx::query_as("SELECT key FROM api_keys")
+        .fetch_all(pool)
+        .await
+        .context("查询 API Keys 失败")?;
+    let keys = keys.into_iter().map(|(k,)| k).collect();
+    Ok(ApiKeyDb { keys })
 }

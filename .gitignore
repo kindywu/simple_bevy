@@ -1,6 +1,6 @@
 /target
 /platform/target
-trading.db
+*.db
 .env
 /.claude
 /.superpowers
